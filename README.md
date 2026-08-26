@@ -158,6 +158,7 @@ npm run deploy
 │   └── deploy.ts                         # Terminal contract deployment script
 ├── deployment.json                       # Active contract address & seed metadata
 ├── docker-compose.yml                    # Midnight Proof Server container configuration
+├── troubleshooting-commands.md           # Comprehensive CLI diagnostics, API & GraphQL query guide
 ├── next.config.mjs                       # Next.js server & WebAssembly configuration
 ├── package.json                          # Dependencies and scripts
 └── tsconfig.json                         # TypeScript configuration
@@ -177,6 +178,20 @@ npm run deploy
 | `npm run compile` | Compiles `contracts/hello-world.compact` using Compact compiler |
 | `npm run proof-server:start` | Starts the Docker container for Midnight Proof Server |
 | `npm run proof-server:stop` | Stops the Proof Server container |
+
+---
+
+## 🔧 Diagnostics & Troubleshooting
+
+For a complete reference of diagnostic commands, curl API examples, LevelDB cache locations, and direct Midnight GraphQL indexer queries, refer to:
+
+👉 **[`troubleshooting-commands.md`](file:///home/paul/compact/hello-word/troubleshooting-commands.md)**
+
+Key topics covered:
+- **Local Storage & LevelDB**: Inspecting persistent wallet cache and LevelDB artifacts.
+- **REST API Endpoints**: Checking wallet status, registering DUST, querying contract state, and triggering ZK proofs via `curl`.
+- **Direct GraphQL Queries**: Checking Midnight network epoch info (`currentEpochInfo`) and indexer capabilities.
+- **DUST Generation Diagnostics**: Verifying UTXO registration status and time-based DUST accrual.
 
 ---
 

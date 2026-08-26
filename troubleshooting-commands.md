@@ -77,6 +77,16 @@ curl -s "http://localhost:3000/api/contract/state?address=7cf30a5f13644e109d7374
 curl -s http://localhost:3000/api/system/status | jq
 ```
 
+### E. Query Contract State by Address
+```bash
+curl -s "http://localhost:3000/api/contract/state?address=7cf30a5f13644e109d7374fe0529f8e4cddc6ee0d4a6eb3013ad6fe291e9c3d9" | jq
+```
+
+### F. Query Wallet Status and Balance (using the seed from the deployment.json file)
+
+```bash
+curl -s -X POST http://localhost:3000/api/wallet/status -H "Content-Type: application/json" -d '{"seed":"Wallet seed"}' | jq
+```
 ---
 
 ## 3. Direct Indexer GraphQL Queries
@@ -125,3 +135,69 @@ curl -s -X POST http://localhost:3000/api/wallet/send-shielded
         "memo":"Hello World"
       }' | jq
 ``` 
+
+---
+
+## 6. How to Check DUST Generation
+
+### A. Query Midnight Preprod Epoch Progress via GraphQL
+
+On the Midnight v4 indexer, the `currentEpochInfo` schema fields are `epochNo`, `durationSeconds`, and `elapsedSeconds`:
+
+```bash
+curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query": "query { currentEpochInfo { epochNo durationSeconds elapsedSeconds } }"}' | jq
+```
+
+**Expected Response:**
+```json
+{
+  "data": {
+    "currentEpochInfo": {
+      "epochNo": 993195,
+      "durationSeconds": 1800,
+      "elapsedSeconds": 1240
+    }
+  }
+}
+```
+
+- `epochNo`: Current Midnight network epoch number.
+- `durationSeconds`: Epoch length in seconds (1800s = 30 minutes).
+- `elapsedSeconds`: Progress in seconds through the current epoch.
+
+### B. Query Local Wallet Live DUST Balance & Sync Progress
+
+```bash
+curl -s -X POST http://localhost:3000/api/wallet/status \
+  -H "Content-Type: application/json" \
+  -d '{"seed":"<WALLET_SEED>"}' | jq
+```
+
+### C. Verify All UTXOs Are Registered for DUST Generation
+
+```bash
+curl -s -X POST http://localhost:3000/api/wallet/register-dust \
+  -H "Content-Type: application/json" \
+  -d '{"seed":"<WALLET_SEED>"}' | jq
+```
+
+** Expected result: **
+```json
+{
+  "success": true,
+  "data": {
+    "alreadyRegistered": true,
+    "message": "All available tNIGHT UTXOs are already registered for DUST generation. DUST generation is pending epoch distribution."
+  }
+}
+```
+
+This response confirms two important things:
+
+1.Registration is Active On-Chain: All your  tNIGHT UTXOs have been successfully linked to your DUST key on the blockchain.
+
+2.Epoch Distribution: On the Midnight network, after registering UTXOs for DUST or after spending DUST in a transaction:
+   - Epochs on Midnight Preprod last 30 minutes (durationSeconds: 1800).
+   - The DUST state machine activates the accrual calculation across the epoch boundary and updates the ledger's DUST commitment tree.
