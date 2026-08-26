@@ -113,9 +113,16 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
                   <span>Synced</span>
                 </span>
               ) : (
-                <span className="flex items-center space-x-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-400 border border-amber-500/20">
+                <span className="flex items-center space-x-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-400 border border-amber-500/20">
                   <RefreshCw className="h-3 w-3 animate-spin" />
-                  <span>Syncing...</span>
+                  <span>
+                    Syncing... {walletStatus?.syncProgress?.percentage ? `${walletStatus.syncProgress.percentage}%` : ''}
+                  </span>
+                  {walletStatus?.syncProgress?.highestTransactionId && BigInt(walletStatus.syncProgress.highestTransactionId) > 0n && (
+                    <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
+                      ({walletStatus.syncProgress.appliedId} / {walletStatus.syncProgress.highestTransactionId})
+                    </span>
+                  )}
                 </span>
               )}
             </h3>

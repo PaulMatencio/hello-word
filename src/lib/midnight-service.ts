@@ -72,7 +72,7 @@ async function getContractArtifacts() {
     };
 }
 
-// Wallet cache to avoid re-syncing from scratch on every request
+// Wallet cache stored on globalThis to survive Next.js Fast Refresh & dev recompiles
 interface CachedWalletContext {
     wallet: any;
     shieldedSecretKeys: any;
@@ -82,7 +82,12 @@ interface CachedWalletContext {
     lastActive: number;
 }
 
-const walletCache = new Map<string, CachedWalletContext>();
+const globalForMidnight = globalThis as unknown as {
+    __midnightWalletCache?: Map<string, CachedWalletContext>;
+};
+
+const walletCache = globalForMidnight.__midnightWalletCache ?? new Map<string, CachedWalletContext>();
+if (process.env.NODE_ENV !== 'production') globalForMidnight.__midnightWalletCache = walletCache;
 
 export function deriveKeys(seed: string) {
     const cleanSeed = seed.trim();
@@ -249,6 +254,21 @@ export async function getWalletStatus(seed: string) {
     const tNightBalance = state ? ((state as any).unshielded.balances[unshieldedToken().raw] ?? 0n).toString() : '0';
     const dustBalance = state ? (state as any).dust.balance(new Date()).toString() : '0';
 
+    const unshieldedProgress = (state as any)?.unshielded?.progress;
+    const shieldedProgress = (state as any)?.shielded?.progress;
+    const dustProgress = (state as any)?.dust?.progress;
+
+    const appliedId = unshieldedProgress?.appliedId?.toString() ?? '0';
+    const highestTransactionId = unshieldedProgress?.highestTransactionId?.toString() ?? '0';
+    const isConnected = unshieldedProgress?.isConnected ?? false;
+
+    let syncPercentage = 0;
+    if (highestTransactionId && BigInt(highestTransactionId) > 0n) {
+        syncPercentage = Math.min(100, Math.round((Number(appliedId) / Number(highestTransactionId)) * 100));
+    } else if (isSynced) {
+        syncPercentage = 100;
+    }
+
     return {
         address,
         isSynced,
@@ -256,6 +276,14 @@ export async function getWalletStatus(seed: string) {
         dustBalance,
         network: 'preprod',
         faucetUrl: CONFIG.faucet,
+        syncProgress: {
+            appliedId,
+            highestTransactionId,
+            isConnected,
+            percentage: syncPercentage,
+            shieldedApplied: shieldedProgress?.appliedId?.toString() ?? '0',
+            dustApplied: dustProgress?.appliedId?.toString() ?? '0',
+        },
     };
 }
 
