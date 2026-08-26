@@ -1,0 +1,6 @@
+{
+    "contractAddress": "contractAddress",
+    "seed": "seed",
+    "network": "network",
+    "deployedAt": "YYYY-MM-DDTHH:MM:SS.sssZ"
+}
