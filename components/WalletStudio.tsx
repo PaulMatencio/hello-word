@@ -16,6 +16,7 @@ import {
   Eye,
   EyeOff,
   PlusCircle,
+  Activity,
 } from 'lucide-react';
 
 interface WalletStudioProps {
@@ -27,12 +28,22 @@ interface WalletStudioProps {
     tNightBalance: string;
     dustBalance: string;
     faucetUrl: string;
+    syncProgress?: {
+      appliedId: string;
+      highestTransactionId: string;
+      isConnected: boolean;
+      percentage: number;
+      unshielded?: { applied: string; highest: string; percentage: number };
+      shielded?: { applied: string; highest: string; percentage: number };
+      dust?: { applied: string; highest: string; percentage: number };
+    };
   } | null;
   isLoading: boolean;
   onRefresh: () => void;
   onRegisterDust: () => Promise<void>;
   isRegisteringDust: boolean;
   defaultSeed?: string;
+  onOpenSyncDashboard?: () => void;
 }
 
 export const WalletStudio: React.FC<WalletStudioProps> = ({
@@ -44,6 +55,7 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
   onRegisterDust,
   isRegisteringDust,
   defaultSeed,
+  onOpenSyncDashboard,
 }) => {
   const [showSeed, setShowSeed] = useState(false);
   const [copiedAddr, setCopiedAddr] = useState(false);
@@ -90,12 +102,13 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
     }
   };
 
-  const formattedTNight = walletStatus
-    ? Number(walletStatus.tNightBalance).toLocaleString()
-    : '0';
-  const formattedDust = walletStatus
-    ? Number(walletStatus.dustBalance).toLocaleString()
-    : '0';
+  const rawNight = walletStatus?.tNightBalance ? BigInt(walletStatus.tNightBalance) : 0n;
+  const formattedTNight = (Number(rawNight) / 1_000_000).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6,
+  });
+  const rawDust = walletStatus?.dustBalance ? BigInt(walletStatus.dustBalance) : 0n;
+  const formattedDust = Number(rawDust).toLocaleString();
 
   return (
     <div className="glass-panel p-6 sm:p-8 relative">
@@ -107,30 +120,54 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
           <div>
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               Wallet Studio
-              {walletStatus?.isSynced ? (
-                <span className="flex items-center space-x-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/20">
+              {!walletStatus ? (
+                <span className="flex items-center space-x-1.5 rounded-full bg-slate-800 px-2.5 py-0.5 text-[11px] font-medium text-slate-400 border border-white/10">
+                  <RefreshCw className="h-3 w-3 animate-spin text-slate-400" />
+                  <span>Connecting...</span>
+                </span>
+              ) : walletStatus.isSynced ? (
+                <button
+                  onClick={onOpenSyncDashboard}
+                  className="flex items-center space-x-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all cursor-pointer"
+                  title="Click to open Live Sync Telemetry Monitor"
+                >
                   <ShieldCheck className="h-3 w-3" />
                   <span>Synced</span>
-                </span>
+                </button>
               ) : (
-                <span className="flex items-center space-x-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-400 border border-amber-500/20">
+                <button
+                  onClick={onOpenSyncDashboard}
+                  className="flex items-center space-x-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-medium text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-all cursor-pointer"
+                  title="Click to open Live Sync Telemetry Monitor"
+                >
                   <RefreshCw className="h-3 w-3 animate-spin" />
                   <span>
-                    Syncing... {walletStatus?.syncProgress?.percentage ? `${walletStatus.syncProgress.percentage}%` : ''}
+                    Syncing... {walletStatus?.syncProgress?.percentage !== undefined ? `${walletStatus.syncProgress.percentage}%` : ''}
                   </span>
-                  {walletStatus?.syncProgress?.highestTransactionId && BigInt(walletStatus.syncProgress.highestTransactionId) > 0n && (
-                    <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
-                      ({walletStatus.syncProgress.appliedId} / {walletStatus.syncProgress.highestTransactionId})
-                    </span>
-                  )}
-                </span>
+                </button>
               )}
             </h3>
-            <p className="text-xs text-slate-400">Midnight Multi-Role HD Wallet & DUST Management</p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
+              <span>Midnight Multi-Role HD Wallet</span>
+              {!walletStatus?.isSynced && walletStatus?.syncProgress?.unshielded && (
+                <span className="text-[11px] text-slate-500 font-mono">
+                  [Unshielded: {walletStatus.syncProgress.unshielded.percentage}% | Shielded: {walletStatus.syncProgress.shielded?.percentage ?? 0}% | DUST: {walletStatus.syncProgress.dust?.percentage ?? 0}%]
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
         <div className="flex items-center space-x-2">
+          {onOpenSyncDashboard && (
+            <button
+              onClick={onOpenSyncDashboard}
+              className="flex items-center space-x-1.5 rounded-lg bg-midnight-900/80 px-3 py-1.5 text-xs font-medium text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/10 hover:text-cyan-200 transition-all"
+            >
+              <Activity className="h-3.5 w-3.5 text-cyan-400 animate-pulse" />
+              <span>Sync Monitor</span>
+            </button>
+          )}
           <button
             onClick={onRefresh}
             disabled={isLoading || !seed}
@@ -242,8 +279,13 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
               <Coins className="h-4 w-4 text-cyan-400" />
             </div>
             <div className="mt-1">
-              <p className="text-2xl font-bold text-white tracking-tight">{formattedTNight}</p>
-              <p className="text-[11px] text-slate-500">Unshielded Native Token</p>
+              <div className="flex items-baseline space-x-1.5">
+                <p className="text-2xl font-bold text-white tracking-tight">{formattedTNight}</p>
+                <span className="text-xs text-cyan-400 font-semibold">tNIGHT</span>
+              </div>
+              <p className="text-[11px] text-slate-500 font-mono">
+                {rawNight > 0n ? `${rawNight.toLocaleString()} base units` : 'Unshielded Native Token'}
+              </p>
             </div>
           </div>
           <div className="mt-3 pt-2 border-t border-white/5">

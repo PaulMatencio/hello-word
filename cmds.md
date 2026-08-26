@@ -1,0 +1,127 @@
+# Midnight Hello World - Useful Commands & Diagnostics
+
+A curated reference of command-line operations, API queries, and cache inspection commands for the Midnight Hello World DApp.
+
+---
+
+## 1. Local Persistent Caches & Storage
+
+### A. Discover All Cache & Storage Artifacts
+Navigate to the project root directory and search for local LevelDB, cache, and deployment files:
+```bash
+ls -la | grep -E "midnight|\.level|cache|storage|deployment"
+```
+
+---
+
+### B. On-Disk LevelDB Cache (`midnight-level-db/`)
+* **Location**: [`midnight-level-db/`]  (./midnight-level-db/)
+* **Description**: The Midnight Wallet SDK's LevelDB binary store containing indexed cryptographic commitments, Merkle tree checkpoints, and UTXO transaction logs.
+* **Inspect Directory**:
+  ```bash
+  ls -la midnight-level-db/
+  ```
+
+---
+
+### C. In-Memory Runtime Cache (`globalThis.__midnightWalletCache`)
+* **Source Definition**: [`src/lib/midnight-service.ts`](./src/lib/midnight-service.ts)
+* **What it stores**:
+  * Active `WalletFacade` instance
+  * Derivation key pairs (`Zswap`, `DUST`, `NightExternal`)
+  * Persistent WebSocket stream to `wss://indexer.preprod.midnight.network/api/v4/graphql/ws`
+  * Confirmed balances across Next.js dev reloads
+* **Query Active Cache State**:
+  ```bash
+  curl -s -X POST http://localhost:3000/api/wallet/status \
+    -H "Content-Type: application/json" \
+    -d '{"seed":"Wallet seed"}' | jq
+  ```
+
+---
+
+### D. Contract Deployment Record (`deployment.json`)
+* **Location**: [`deployment.json`](file:///home/paul/compact/hello-word/deployment.json)
+* **Description**: Contains the deployed contract address, deployer seed, and network metadata.
+* **Inspect Content**:
+  ```bash
+  cat deployment.json | jq
+  ```
+
+---
+
+## 2. API & Network Queries
+
+### A. Query Wallet Status & Balance (Atomic Units)
+```bash
+curl -s -X POST http://localhost:3000/api/wallet/status \
+  -H "Content-Type: application/json" \
+  -d '{"seed":"Wallet seed"}' | jq
+```
+
+### B. Formatted Wallet Balance One-Liner
+```bash
+curl -s -X POST http://localhost:3000/api/wallet/status \
+  -H "Content-Type: application/json" \
+  -d '{"seed":"Wallet seed"}' \
+  | jq -r '"Address: " + .data.address + "\nBalance: " + ((.data.tNightBalance | tonumber) / 1000000 | tostring) + " tNIGHT"'
+```
+
+### C. Query Current Contract On-Chain State
+```bash
+curl -s "http://localhost:3000/api/contract/state?address=7cf30a5f13644e109d7374fe0529f8e4cddc6ee0d4a6eb3013ad6fe291e9c3d9" | jq
+```
+
+### D. Query System Health & Proof Server
+```bash
+curl -s http://localhost:3000/api/system/status | jq
+```
+
+---
+
+## 3. Direct Indexer GraphQL Queries
+
+### Query Indexer Schema Capabilities
+```bash
+curl -s -X POST https://indexer.preprod.midnight.network/api/v4/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query": "query { __schema { queryType { fields { name } } } }"}' | jq
+```
+
+## 4. Register for Dust Generation 
+
+DUST registration only depends on your Unshielded Wallet.
+
+- This is an Unshielded Transaction on the Midnight blockchain.
+- It takes your available tNIGHT UTXOs and broadcasts an on-chain registration transaction associating them with your DUST public key (derived deterministically from your seed).
+- It does not spend existing DUST tokens, so it does not need historical DUST UTXO nullifier trees to be scanned.
+
+```bash 
+curl -s -X POST http://localhost:3000/api/wallet/register-dust \
+  -H "Content-Type: application/json" \
+  -d '{"seed":"Wallet seed"}' | jq
+```
+{
+  "success": true,
+  "data": {
+    "alreadyRegistered": true,
+    "message": "All available tNIGHT UTXOs are already registered for DUST generation. DUST generation is pending epoch distribution."
+  }
+}
+
+---
+## 5. Send a Shielded Transaction (Zswap)
+
+This will spend your tNIGHT and send it to the Hello World contract in a shielded transaction.    
+
+```bash 
+curl -s -X POST http://localhost:3000/api/wallet/send-shielded 
+  -H "Content-Type: application/json" \
+  -d '{
+        "seed":"Wallet seed",
+        "recipient":"Contract address",
+        "amount":"1",
+        "targetAddress":"0xa1234567890abcdef1234567890abcdef1234567",
+        "memo":"Hello World"
+      }' | jq
+``` 

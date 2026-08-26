@@ -80,6 +80,8 @@ interface CachedWalletContext {
     unshieldedKeystore: any;
     seed: string;
     lastActive: number;
+    lastKnownNightBalance?: string;
+    lastKnownDustBalance?: string;
 }
 
 const globalForMidnight = globalThis as unknown as {
@@ -244,29 +246,66 @@ export async function getWalletStatus(seed: string) {
     const address = walletCtx.unshieldedKeystore.getBech32Address().toString();
 
     // Fast status check from current observable state
-    const state = await Rx.firstValueFrom(
+    let state = await Rx.firstValueFrom(
         walletCtx.wallet.state().pipe(
             Rx.timeout({ each: 10000, with: () => walletCtx.wallet.state() }),
         )
     ).catch(() => null);
 
+    // If state is freshly starting (0 balance and 0 progress), wait up to 1.5s for initial WebSocket snapshot
+    if (state && (!(state as any).unshielded?.balances || Object.keys((state as any).unshielded.balances).length === 0) && !(state as any).isSynced) {
+        state = await Rx.firstValueFrom(
+            walletCtx.wallet.state().pipe(
+                Rx.filter((s: any) => (s.unshielded?.balances && Object.keys(s.unshielded.balances).length > 0) || (s.unshielded?.progress?.appliedId && BigInt(s.unshielded.progress.appliedId) > 0n) || s.isSynced),
+                Rx.timeout({ each: 1500, with: () => walletCtx.wallet.state() }),
+            )
+        ).catch(() => state);
+    }
+
     const isSynced = (state as any)?.isSynced ?? false;
-    const tNightBalance = state ? ((state as any).unshielded.balances[unshieldedToken().raw] ?? 0n).toString() : '0';
-    const dustBalance = state ? (state as any).dust.balance(new Date()).toString() : '0';
+    let tNightBalance = state ? ((state as any).unshielded?.balances?.[unshieldedToken().raw] ?? 0n).toString() : '0';
+    let dustBalance = state ? ((state as any).dust?.balance?.(new Date()) ?? 0n).toString() : '0';
+
+    if (tNightBalance !== '0') {
+        walletCtx.lastKnownNightBalance = tNightBalance;
+    } else if (walletCtx.lastKnownNightBalance && !isSynced) {
+        tNightBalance = walletCtx.lastKnownNightBalance;
+    }
+
+    if (dustBalance !== '0') {
+        walletCtx.lastKnownDustBalance = dustBalance;
+    } else if (walletCtx.lastKnownDustBalance && !isSynced) {
+        dustBalance = walletCtx.lastKnownDustBalance;
+    }
 
     const unshieldedProgress = (state as any)?.unshielded?.progress;
     const shieldedProgress = (state as any)?.shielded?.progress;
     const dustProgress = (state as any)?.dust?.progress;
 
-    const appliedId = unshieldedProgress?.appliedId?.toString() ?? '0';
-    const highestTransactionId = unshieldedProgress?.highestTransactionId?.toString() ?? '0';
+    const unshieldedApplied = unshieldedProgress?.appliedId ? BigInt(unshieldedProgress.appliedId.toString()) : 0n;
+    const unshieldedHighest = unshieldedProgress?.highestTransactionId ? BigInt(unshieldedProgress.highestTransactionId.toString()) : 0n;
+    const isUnshieldedStrictlyComplete = typeof unshieldedProgress?.isStrictlyComplete === 'function' ? unshieldedProgress.isStrictlyComplete() : false;
+
+    const shieldedApplied = (shieldedProgress?.appliedIndex ?? shieldedProgress?.appliedId) ? BigInt((shieldedProgress?.appliedIndex ?? shieldedProgress?.appliedId).toString()) : 0n;
+    const shieldedHighest = (shieldedProgress?.highestRelevantIndex ?? shieldedProgress?.highestIndex ?? shieldedProgress?.highestRelevantWalletIndex ?? shieldedProgress?.highestTransactionId) ? BigInt((shieldedProgress?.highestRelevantIndex ?? shieldedProgress?.highestIndex ?? shieldedProgress?.highestRelevantWalletIndex ?? shieldedProgress?.highestTransactionId).toString()) : 0n;
+    const isShieldedStrictlyComplete = typeof shieldedProgress?.isStrictlyComplete === 'function' ? shieldedProgress.isStrictlyComplete() : false;
+
+    const dustApplied = (dustProgress?.appliedIndex ?? dustProgress?.appliedId) ? BigInt((dustProgress?.appliedIndex ?? dustProgress?.appliedId).toString()) : 0n;
+    const dustHighest = (dustProgress?.highestRelevantIndex ?? dustProgress?.highestIndex ?? dustProgress?.highestRelevantWalletIndex ?? dustProgress?.highestTransactionId) ? BigInt((dustProgress?.highestRelevantIndex ?? dustProgress?.highestIndex ?? dustProgress?.highestRelevantWalletIndex ?? dustProgress?.highestTransactionId).toString()) : 0n;
+    const isDustStrictlyComplete = typeof dustProgress?.isStrictlyComplete === 'function' ? dustProgress.isStrictlyComplete() : false;
+
     const isConnected = unshieldedProgress?.isConnected ?? false;
 
-    let syncPercentage = 0;
-    if (highestTransactionId && BigInt(highestTransactionId) > 0n) {
-        syncPercentage = Math.min(100, Math.round((Number(appliedId) / Number(highestTransactionId)) * 100));
-    } else if (isSynced) {
-        syncPercentage = 100;
+    // Calculate individual percentages
+    const pUnshielded = isUnshieldedStrictlyComplete ? 100 : (unshieldedHighest > 0n ? Math.min(100, Math.round((Number(unshieldedApplied) / Number(unshieldedHighest)) * 100)) : 0);
+    const pShielded = isShieldedStrictlyComplete ? 100 : (shieldedHighest > 0n ? Math.min(100, Math.round((Number(shieldedApplied) / Number(shieldedHighest)) * 100)) : 0);
+    const pDust = isDustStrictlyComplete ? 100 : (dustHighest > 0n ? Math.min(100, Math.round((Number(dustApplied) / Number(dustHighest)) * 100)) : 0);
+
+    let overallPercentage = Math.floor((pUnshielded + pShielded + pDust) / 3);
+    if (isSynced || (isUnshieldedStrictlyComplete && isShieldedStrictlyComplete && isDustStrictlyComplete)) {
+        overallPercentage = 100;
+    } else if (overallPercentage >= 100 && !isSynced) {
+        overallPercentage = 99; // Cap at 99% until isSynced is strictly true
     }
 
     return {
@@ -277,12 +316,25 @@ export async function getWalletStatus(seed: string) {
         network: 'preprod',
         faucetUrl: CONFIG.faucet,
         syncProgress: {
-            appliedId,
-            highestTransactionId,
+            appliedId: unshieldedApplied.toString(),
+            highestTransactionId: unshieldedHighest.toString(),
             isConnected,
-            percentage: syncPercentage,
-            shieldedApplied: shieldedProgress?.appliedId?.toString() ?? '0',
-            dustApplied: dustProgress?.appliedId?.toString() ?? '0',
+            percentage: overallPercentage,
+            unshielded: {
+                applied: unshieldedApplied.toString(),
+                highest: unshieldedHighest.toString(),
+                percentage: pUnshielded,
+            },
+            shielded: {
+                applied: shieldedApplied.toString(),
+                highest: shieldedHighest.toString(),
+                percentage: pShielded,
+            },
+            dust: {
+                applied: dustApplied.toString(),
+                highest: dustHighest.toString(),
+                percentage: pDust,
+            },
         },
     };
 }
@@ -292,11 +344,20 @@ export async function getWalletStatus(seed: string) {
  */
 export async function registerForDust(seed: string) {
     const walletCtx = await getOrCreateWallet(seed);
-    await walletCtx.wallet.waitForSyncedState();
 
-    const dustState: any = await Rx.firstValueFrom(walletCtx.wallet.state().pipe(Rx.filter((s: any) => s.isSynced)));
-    const currentDust = dustState.dust.balance(new Date());
+    // Wait for unshielded available coins (does not require DUST historical indexer scan to finish)
+    let state: any = await Rx.firstValueFrom(
+        walletCtx.wallet.state().pipe(
+            Rx.filter((s: any) => (s.unshielded?.availableCoins && s.unshielded.availableCoins.length > 0) || s.isSynced),
+            Rx.timeout({ each: 10000, with: () => walletCtx.wallet.state() }),
+        )
+    ).catch(() => null);
 
+    if (!state || !state.unshielded?.availableCoins || state.unshielded.availableCoins.length === 0) {
+        throw new Error('No unshielded tNIGHT coins detected yet. Please ensure your wallet has funds from the Nethermind faucet.');
+    }
+
+    const currentDust = state.dust?.balance?.(new Date()) ?? 0n;
     if (currentDust > 0n) {
         return {
             success: true,
@@ -306,9 +367,13 @@ export async function registerForDust(seed: string) {
         };
     }
 
-    const nightUtxos = dustState.unshielded.availableCoins.filter((c: any) => !c.meta?.registeredForDustGeneration);
+    const nightUtxos = state.unshielded.availableCoins.filter((c: any) => !c.meta?.registeredForDustGeneration);
     if (nightUtxos.length === 0) {
-        throw new Error('No unshielded tNIGHT UTXOs available to register. Please request funds from the Nethermind faucet first.');
+        return {
+            success: true,
+            alreadyRegistered: true,
+            message: 'All available tNIGHT UTXOs are already registered for DUST generation. DUST generation is pending epoch distribution.',
+        };
     }
 
     const recipe = await walletCtx.wallet.registerNightUtxosForDustGeneration(

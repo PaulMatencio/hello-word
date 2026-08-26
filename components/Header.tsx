@@ -12,6 +12,8 @@ interface HeaderProps {
   activeTab: 'app' | 'terminal';
   setActiveTab: (tab: 'app' | 'terminal') => void;
   walletAddress: string | null;
+  onOpenSyncDashboard?: () => void;
+  isSynced?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +21,8 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   walletAddress,
+  onOpenSyncDashboard,
+  isSynced,
 }) => {
   const isProofOnline = systemHealth?.proofServer.status === 'online';
   const isIndexerOnline = systemHealth?.indexer.status === 'online';
@@ -107,6 +111,21 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
             )}
           </div>
+          {/* Sync Monitor Trigger Button */}
+          {onOpenSyncDashboard && (
+            <button
+              onClick={onOpenSyncDashboard}
+              className={`flex items-center space-x-1.5 rounded-full px-2.5 py-1 text-xs border transition-all ${
+                isSynced
+                  ? 'bg-midnight-900/90 border-white/5 text-slate-300 hover:border-emerald-500/40 hover:text-white'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
+              }`}
+              title="Open Live Sync Telemetry Monitor"
+            >
+              <Activity className={`h-3.5 w-3.5 ${isSynced ? 'text-emerald-400' : 'text-amber-400 animate-pulse'}`} />
+              <span className="hidden lg:inline">Sync Monitor</span>
+            </button>
+          )}
         </div>
       </div>
     </header>

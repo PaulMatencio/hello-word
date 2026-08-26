@@ -8,9 +8,11 @@ import { WalletStudio } from '@/components/WalletStudio';
 import { ContractManager } from '@/components/ContractManager';
 import { WebTerminal } from '@/components/WebTerminal';
 import { TransactionFeed, TxRecord } from '@/components/TransactionFeed';
+import { SyncDashboardModal } from '@/components/SyncDashboardModal';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'app' | 'terminal'>('app');
+  const [isSyncDashboardOpen, setIsSyncDashboardOpen] = useState<boolean>(false);
 
   // System & Deployment state
   const [systemHealth, setSystemHealth] = useState<any>(null);
@@ -137,14 +139,15 @@ export default function Home() {
     }
   }, [seed, fetchWalletStatus]);
 
-  // Periodic polling for contract state and system status every 20 seconds
+  // Periodic polling for wallet status, contract state and system status every 8 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       if (contractAddress) fetchContractState(contractAddress);
+      if (seed) fetchWalletStatus(seed);
       fetchSystemHealth();
-    }, 20000);
+    }, 8000);
     return () => clearInterval(interval);
-  }, [contractAddress, fetchContractState, fetchSystemHealth]);
+  }, [contractAddress, seed, fetchContractState, fetchWalletStatus, fetchSystemHealth]);
 
   const handleTxSuccess = (result: any) => {
     const newTx: TxRecord = {
@@ -176,6 +179,8 @@ export default function Home() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         walletAddress={walletStatus?.address || null}
+        onOpenSyncDashboard={() => setIsSyncDashboardOpen(true)}
+        isSynced={walletStatus?.isSynced ?? false}
       />
 
       {/* Main Container */}
@@ -217,6 +222,7 @@ export default function Home() {
               onRegisterDust={handleRegisterDust}
               isRegisteringDust={isRegisteringDust}
               defaultSeed={defaultSeed}
+              onOpenSyncDashboard={() => setIsSyncDashboardOpen(true)}
             />
 
             {/* Bottom Grid: Contract Manager & Transaction History */}
@@ -244,6 +250,15 @@ export default function Home() {
           </div>
         )}
       </main>
+
+      {/* On-Demand Sync Activity & Telemetry Dashboard Modal */}
+      <SyncDashboardModal
+        isOpen={isSyncDashboardOpen}
+        onClose={() => setIsSyncDashboardOpen(false)}
+        seed={seed}
+        initialData={walletStatus?.syncProgress}
+        isSynced={walletStatus?.isSynced ?? false}
+      />
 
       {/* Footer */}
       <footer className="border-t border-white/5 bg-midnight-950/60 py-6 text-center text-xs text-slate-500">
