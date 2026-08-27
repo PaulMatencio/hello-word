@@ -8,7 +8,7 @@ A full-stack decentralized Zero-Knowledge application and interactive CLI built 
 
 - **Decentralized On-Chain Message Board**: Real-time inspection and live polling of public disclosed state from the Midnight Preprod indexer.
 - **Zero-Knowledge Message Publisher**: Proves, balances, signs, and broadcasts `storeMessage` circuit transactions with a step-by-step visual pipeline (*Sync -> ZK Proof -> Balance DUST -> Block Confirmation*).
-- **Wallet Studio**: Multi-role HD wallet management (`Roles.Zswap`, `Roles.NightExternal`, `Roles.Dust`), live tNIGHT & DUST balance tracking, and one-click DUST generation registration.
+- **Wallet Studio & Send Hub**: Multi-role HD wallet management (`Roles.Zswap`, `Roles.NightExternal`, `Roles.Dust`), live tNIGHT & DUST balance tracking, one-click DUST generation registration, and an unshielded token transfer hub with a 4-step visual execution pipeline.
 - **Sync Activity & Telemetry Monitor**: Real-time sub-wallet convergence tracking across all 3 Midnight state machines (Unshielded, Shielded Zswap, DUST Engine), live throughput rates (items/s), and real-time ingestion event feeds.
 - **Interactive Web CLI / Terminal**: Embedded terminal emulator replicating the native CLI tool directly inside the browser.
 - **Contract Deployment Hub**: One-click deployment of fresh Compact smart contract instances to Midnight Preprod.
@@ -96,6 +96,7 @@ Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 - **Message Board**: Shows the latest message stored on-chain. Click **Refresh** to query the Midnight GraphQL indexer.
 - **Prove & Store Message**: Type a message and submit. The app automatically computes a Zero-Knowledge proof with your local proof server, balances the fee with DUST, and broadcasts to Midnight Preprod.
 - **Wallet Studio**: View and switch wallet seeds, inspect your Bech32 address, check live tNIGHT / DUST balances, and register for DUST.
+- **Send Unshielded tNIGHT**: Click **"Send"** in Wallet Studio to open the interactive Send Modal. Transfer tNIGHT to any Bech32m unshielded recipient with a live 4-stage execution stepper (*Prepare Recipe -> Keystore Sign -> ZK Prove & Finalize -> Network Broadcast*) and a complete receipt showing transaction hash, settlement time, and DUST gas cost.
 - **Sync Telemetry Monitor**: Click the sync indicator or monitor button to open the live dashboard tracking multi-state machine convergence (Unshielded, Shielded, DUST), indexing throughput, and real-time event feeds.
 - **Contract Manager**: Deploy a new instance of the contract or switch active contract addresses.
 
@@ -136,6 +137,7 @@ npm run deploy
 │   │   ├── contract/deploy/route.ts      # Deploy new contract
 │   │   ├── wallet/status/route.ts        # Stream address & balances
 │   │   ├── wallet/register-dust/route.ts # Register UTXOs for DUST
+│   │   ├── wallet/send/route.ts          # Send unshielded tNIGHT tokens
 │   │   └── system/status/route.ts        # Check Proof Server & Indexer health
 │   ├── globals.css                       # Dark Cyber/Midnight theme & glassmorphism styles
 │   ├── layout.tsx                        # Root layout with fonts and metadata
