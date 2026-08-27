@@ -38,6 +38,8 @@ next-env.d.ts
 
 # Midnight local leveldb
 /midnight-level-db/
-
+ 
 # Midnight deployment and secrets
 deployment.json
+wallet-cache.json
+tx-history.json
