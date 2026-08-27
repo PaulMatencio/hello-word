@@ -17,7 +17,9 @@ import {
   EyeOff,
   PlusCircle,
   Activity,
+  Send,
 } from 'lucide-react';
+// import { sendUnshieldedTNight } from '../src/lib/midnight-service'; // Server-side only function moved to API endpoint
 
 interface WalletStudioProps {
   seed: string;
@@ -61,6 +63,28 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
   const [copiedAddr, setCopiedAddr] = useState(false);
   const [copiedSeed, setCopiedSeed] = useState(false);
   const [inputSeed, setInputSeed] = useState(seed);
+const [showSendModal, setShowSendModal] = useState(false);
+  const [successToast, setSuccessToast] = useState('');
+  useEffect(() => {
+    if (successToast) {
+      const timer = setTimeout(() => setSuccessToast(''), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successToast]);
+  const [receiverAddress, setReceiverAddress] = useState('');
+  const [sendAmount, setSendAmount] = useState('');
+  const [sendError, setSendError] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [sendStep, setSendStep] = useState<number>(1);
+  const [sendReceipt, setSendReceipt] = useState<{
+    txHash?: string;
+    amount?: string;
+    amountUnits?: string;
+    receiver?: string;
+    dustPaid?: string;
+    durationMs?: number;
+    network?: string;
+  } | null>(null);
 
   useEffect(() => {
     setInputSeed(seed);
@@ -159,6 +183,15 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
         </div>
 
         <div className="flex items-center space-x-2">
+            {/* Send tNIGHT Button */}
+            <button
+              onClick={() => setShowSendModal(true)}
+              className="flex items-center space-x-1.5 rounded-lg bg-midnight-900/80 px-3 py-1.5 text-xs font-medium text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/10 hover:text-cyan-200 transition-all"
+              title="Send tNIGHT to an unshielded address"
+            >
+              <Send className="h-3.5 w-3.5 text-cyan-400" />
+              <span>Send</span>
+            </button>
           {onOpenSyncDashboard && (
             <button
               onClick={onOpenSyncDashboard}
@@ -349,6 +382,472 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
           </p>
         </div>
       </div>
+
+
+        {/* Redesigned Modern Web3 Send Modal */}
+        {showSendModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-fade-in">
+            <div className="bg-midnight-950/95 border border-indigo-500/30 rounded-2xl w-full max-w-lg shadow-2xl shadow-purple-950/50 overflow-hidden relative">
+              {/* Modal Top Glowing Accent */}
+              <div className="h-1 w-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-purple-500" />
+
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-white/5">
+                <div className="flex items-center space-x-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 border border-cyan-500/30">
+                    <Send className="h-4 w-4 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      Send Unshielded tNIGHT
+                      <span className="rounded-full bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold text-cyan-400 border border-cyan-500/20">
+                        Preprod
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Transparent on-chain transfer to any Midnight unshielded address
+                    </p>
+                  </div>
+                </div>
+                {!isSending && (
+                  <button
+                    onClick={() => {
+                      setShowSendModal(false);
+                      setReceiverAddress('');
+                      setSendAmount('');
+                      setSendError('');
+                      setSendReceipt(null);
+                      setSendStep(1);
+                    }}
+                    className="rounded-lg p-1.5 text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+                  >
+                    <span className="text-sm font-bold">✕</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 space-y-5">
+                {/* Send Error Notice */}
+                {sendError && (
+                  <div className="p-3.5 bg-rose-950/40 border border-rose-500/30 text-rose-200 rounded-xl text-xs flex items-start space-x-2.5 animate-shake">
+                    <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-semibold text-rose-300">Transfer Failed</p>
+                      <p className="text-rose-200/80 mt-0.5 break-all">{sendError}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* State 1: Input Form (when not sending and no receipt) */}
+                {!isSending && !sendReceipt && (
+                  <div className="space-y-4">
+                    {/* Available Balance Helper */}
+                    <div className="flex items-center justify-between rounded-xl bg-midnight-900/60 p-3 border border-white/5 text-xs">
+                      <div className="flex items-center space-x-2 text-slate-400">
+                        <Coins className="h-4 w-4 text-cyan-400" />
+                        <span>Available Balance:</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-white font-mono">{formattedTNight} tNIGHT</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (walletStatus?.tNightBalance) {
+                              const maxAmt = (Number(rawNight) / 1_000_000).toString();
+                              setSendAmount(maxAmt);
+                            }
+                          }}
+                          className="rounded bg-cyan-500/20 px-2 py-0.5 text-[10px] font-bold text-cyan-300 hover:bg-cyan-500/30 transition-all"
+                        >
+                          MAX
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Receiver Address Field */}
+                    <div>
+                      <label className="text-xs font-semibold text-slate-300 flex items-center justify-between mb-1.5">
+                        <span>Recipient Address</span>
+                        <span className="text-[10px] text-slate-400 font-normal">Bech32m or 64-char Hex</span>
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="mn_addr_preprod1... or hex address"
+                          value={receiverAddress}
+                          onChange={(e) => setReceiverAddress(e.target.value)}
+                          className="w-full rounded-xl bg-midnight-900/90 px-3.5 py-2.5 text-xs font-mono text-slate-200 border border-white/10 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/20 placeholder:text-slate-600"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Amount Field */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-semibold text-slate-300">
+                          Amount to Send
+                        </label>
+                        {sendAmount && !isNaN(Number(sendAmount)) && Number(sendAmount) > 0 && (
+                          <span className="text-[11px] font-mono text-cyan-400">
+                            ≈ {Math.floor(Number(sendAmount) * 1_000_000).toLocaleString()} base units
+                          </span>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          step="0.000001"
+                          min="0"
+                          placeholder="0.00"
+                          value={sendAmount}
+                          onChange={(e) => setSendAmount(e.target.value)}
+                          className="w-full rounded-xl bg-midnight-900/90 px-3.5 py-2.5 text-xs font-mono text-slate-200 border border-white/10 focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500/20 placeholder:text-slate-600 pr-16"
+                        />
+                        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-cyan-400">
+                          tNIGHT
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Gas Fee & Network Notice */}
+                    <div className="rounded-xl bg-indigo-950/30 p-3 border border-indigo-500/20 text-[11px] text-slate-400 flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Flame className="h-3.5 w-3.5 text-amber-400" />
+                        <span>Estimated Gas Fee:</span>
+                      </div>
+                      <div className="flex items-center space-x-1 font-mono text-amber-300 font-semibold">
+                        <span>Paid in DUST</span>
+                        <span className="text-slate-500 font-normal">(auto-balanced)</span>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex justify-end space-x-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSendModal(false);
+                          setReceiverAddress('');
+                          setSendAmount('');
+                          setSendError('');
+                        }}
+                        className="px-4 py-2 text-xs font-medium text-slate-400 hover:text-white border border-white/10 rounded-xl hover:bg-white/5 transition-all"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setSendError('');
+                          if (!receiverAddress.trim()) {
+                            setSendError('Please enter a recipient unshielded address');
+                            return;
+                          }
+                          const amtNum = Number(sendAmount);
+                          if (isNaN(amtNum) || amtNum <= 0) {
+                            setSendError('Please enter a valid positive transfer amount');
+                            return;
+                          }
+                          if (amtNum * 1_000_000 > Number(rawNight)) {
+                            setSendError(`Insufficient balance. You have ${formattedTNight} tNIGHT.`);
+                            return;
+                          }
+
+                          setIsSending(true);
+                          setSendStep(1);
+
+                          // Step simulation timers for rich UI progression feedback
+                          const timer1 = setTimeout(() => setSendStep(2), 1200);
+                          const timer2 = setTimeout(() => setSendStep(3), 3200);
+                          const timer3 = setTimeout(() => setSendStep(4), 5800);
+
+                          try {
+                            const response = await fetch('/api/wallet/send', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                seed,
+                                receiver: receiverAddress.trim(),
+                                amount: sendAmount.trim(),
+                              }),
+                            });
+                            const result = await response.json();
+                            clearTimeout(timer1);
+                            clearTimeout(timer2);
+                            clearTimeout(timer3);
+
+                            if (!response.ok || !result.success) {
+                              throw new Error(result.error || 'Transaction submission failed');
+                            }
+
+                            setSendStep(5);
+                            const receiptData = typeof result.data === 'string'
+                              ? { txHash: result.data }
+                              : (result.data?.txHash && typeof result.data.txHash === 'object'
+                                  ? result.data.txHash
+                                  : result.data);
+                            setSendReceipt(receiptData);
+                            setSuccessToast(`Transfer of ${sendAmount} tNIGHT sent successfully!`);
+                            // Refresh wallet balances
+                            onRefresh();
+                          } catch (e: any) {
+                            clearTimeout(timer1);
+                            clearTimeout(timer2);
+                            clearTimeout(timer3);
+                            setSendError(e.message || 'Transaction submission failed');
+                          } finally {
+                            setIsSending(false);
+                          }
+                        }}
+                        disabled={!receiverAddress.trim() || !sendAmount || isNaN(Number(sendAmount)) || Number(sendAmount) <= 0}
+                        className="flex items-center space-x-2 px-5 py-2.5 text-xs font-semibold text-white bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 rounded-xl shadow-lg shadow-indigo-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        <span>Confirm & Send</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* State 2: Transaction In-Progress Stepper View */}
+                {isSending && (
+                  <div className="space-y-6 py-2">
+                    <div className="text-center space-y-1">
+                      <h4 className="text-sm font-bold text-white">Processing Unshielded Transfer</h4>
+                      <p className="text-xs text-slate-400">
+                        Sending <span className="text-cyan-300 font-mono font-bold">{sendAmount} tNIGHT</span> to{' '}
+                        <span className="text-slate-300 font-mono">
+                          {receiverAddress.slice(0, 10)}...{receiverAddress.slice(-8)}
+                        </span>
+                      </p>
+                    </div>
+
+                    {/* Visual 4-Step Pipeline */}
+                    <div className="space-y-3 relative before:absolute before:left-4 before:top-4 before:bottom-4 before:w-0.5 before:bg-white/10">
+                      {/* Step 1: Create Recipe */}
+                      <div className="flex items-start space-x-3 relative">
+                        <div
+                          className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 border transition-all z-10 ${
+                            sendStep > 1
+                              ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                              : sendStep === 1
+                              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 ring-4 ring-cyan-500/10 animate-pulse'
+                              : 'bg-midnight-900 border-white/10 text-slate-500'
+                          }`}
+                        >
+                          {sendStep > 1 ? <Check className="h-4 w-4" /> : <RefreshCw className={`h-4 w-4 ${sendStep === 1 ? 'animate-spin' : ''}`} />}
+                        </div>
+                        <div className="pt-1">
+                          <p className={`text-xs font-semibold ${sendStep >= 1 ? 'text-white' : 'text-slate-500'}`}>
+                            1. Create Transfer Recipe
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {sendStep === 1 ? 'Selecting unshielded coins & balancing outputs...' : 'UTXO inputs and outputs prepared.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Step 2: Sign Keystore */}
+                      <div className="flex items-start space-x-3 relative">
+                        <div
+                          className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 border transition-all z-10 ${
+                            sendStep > 2
+                              ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                              : sendStep === 2
+                              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 ring-4 ring-cyan-500/10 animate-pulse'
+                              : 'bg-midnight-900 border-white/10 text-slate-500'
+                          }`}
+                        >
+                          {sendStep > 2 ? <Check className="h-4 w-4" /> : <Key className={`h-4 w-4 ${sendStep === 2 ? 'animate-spin' : ''}`} />}
+                        </div>
+                        <div className="pt-1">
+                          <p className={`text-xs font-semibold ${sendStep >= 2 ? 'text-white' : 'text-slate-500'}`}>
+                            2. Sign with Keystore
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {sendStep === 2 ? 'Authorizing unshielded UTXOs with private keys...' : sendStep > 2 ? 'Cryptographically signed.' : 'Awaiting signature.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Step 3: ZK Proof & Finalize */}
+                      <div className="flex items-start space-x-3 relative">
+                        <div
+                          className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 border transition-all z-10 ${
+                            sendStep > 3
+                              ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                              : sendStep === 3
+                              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 ring-4 ring-cyan-500/10 animate-pulse'
+                              : 'bg-midnight-900 border-white/10 text-slate-500'
+                          }`}
+                        >
+                          {sendStep > 3 ? <Check className="h-4 w-4" /> : <Zap className={`h-4 w-4 ${sendStep === 3 ? 'animate-spin' : ''}`} />}
+                        </div>
+                        <div className="pt-1">
+                          <p className={`text-xs font-semibold ${sendStep >= 3 ? 'text-white' : 'text-slate-500'}`}>
+                            3. Prove & Finalize
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {sendStep === 3 ? 'Generating ZK proofs and binding DUST gas fee...' : sendStep > 3 ? 'Proof finalized.' : 'Awaiting proof generation.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Step 4: Network Broadcast */}
+                      <div className="flex items-start space-x-3 relative">
+                        <div
+                          className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 border transition-all z-10 ${
+                            sendStep >= 4
+                              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 ring-4 ring-cyan-500/10 animate-pulse'
+                              : 'bg-midnight-900 border-white/10 text-slate-500'
+                          }`}
+                        >
+                          <Send className={`h-4 w-4 ${sendStep === 4 ? 'animate-bounce' : ''}`} />
+                        </div>
+                        <div className="pt-1">
+                          <p className={`text-xs font-semibold ${sendStep >= 4 ? 'text-white' : 'text-slate-500'}`}>
+                            4. Submit to Midnight Network
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {sendStep === 4 ? 'Broadcasting transaction to Midnight node relay...' : 'Awaiting broadcast.'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* State 3: Completed Success Receipt View */}
+                {!isSending && sendReceipt && (
+                  <div className="space-y-4 py-1 animate-fade-in">
+                    {/* Success Header Badge */}
+                    <div className="flex flex-col items-center justify-center text-center p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/20">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/20 border border-emerald-400 mb-2">
+                        <Check className="h-6 w-6 text-emerald-400" />
+                      </div>
+                      <h4 className="text-sm font-bold text-emerald-300">Transfer Completed Successfully</h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Your unshielded transfer has been finalized and submitted to the network.
+                      </p>
+                    </div>
+
+                    {/* Receipt Details Card */}
+                    <div className="rounded-xl bg-midnight-900/80 p-4 border border-white/5 space-y-3">
+                      {/* Amount & Gas Cost Row */}
+                      <div className="grid grid-cols-2 gap-3 pb-3 border-b border-white/5">
+                        <div>
+                          <span className="text-[11px] text-slate-400 uppercase tracking-wider block mb-0.5">
+                            Amount Sent
+                          </span>
+                          <span className="text-base font-bold text-white font-mono">
+                            {sendReceipt.amount || sendAmount} <span className="text-xs text-cyan-400 font-semibold">tNIGHT</span>
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[11px] text-slate-400 uppercase tracking-wider block mb-0.5 flex items-center gap-1">
+                            <Flame className="h-3 w-3 text-amber-400" />
+                            <span>DUST Gas Paid</span>
+                          </span>
+                          <span className="text-base font-bold text-amber-300 font-mono">
+                            {sendReceipt.dustPaid && sendReceipt.dustPaid !== '0'
+                              ? Number(sendReceipt.dustPaid).toLocaleString()
+                              : '< 1'}{' '}
+                            <span className="text-xs text-amber-400 font-semibold">DUST</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Recipient Address */}
+                      <div>
+                        <span className="text-[11px] text-slate-400 uppercase tracking-wider block mb-0.5">
+                          Recipient Address
+                        </span>
+                        <p className="text-xs font-mono text-slate-300 break-all bg-midnight-950/60 p-2 rounded-lg border border-white/5">
+                          {sendReceipt.receiver || receiverAddress}
+                        </p>
+                      </div>
+
+                      {/* Transaction Hash */}
+                      {sendReceipt.txHash && (
+                        <div>
+                          <span className="text-[11px] text-slate-400 uppercase tracking-wider block mb-0.5">
+                            Transaction Hash
+                          </span>
+                          <div className="flex items-center justify-between bg-midnight-950/60 p-2 rounded-lg border border-white/5">
+                            <p className="text-xs font-mono text-cyan-300 truncate mr-2">
+                              {sendReceipt.txHash}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (sendReceipt?.txHash) {
+                                  navigator.clipboard.writeText(sendReceipt.txHash);
+                                  setSuccessToast('Transaction hash copied to clipboard!');
+                                }
+                              }}
+                              className="text-slate-400 hover:text-white p-1 hover:bg-white/5 rounded"
+                              title="Copy Tx Hash"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Network & Duration */}
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                        <span>Network: <strong className="text-slate-400 uppercase">Preprod</strong></span>
+                        {sendReceipt.durationMs && (
+                          <span>Settlement time: <strong className="text-slate-400 font-mono">{(sendReceipt.durationMs / 1000).toFixed(1)}s</strong></span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Receipt Action Buttons */}
+                    <div className="flex justify-end space-x-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSendReceipt(null);
+                          setReceiverAddress('');
+                          setSendAmount('');
+                          setSendError('');
+                          setSendStep(1);
+                        }}
+                        className="px-4 py-2 text-xs font-medium text-slate-300 hover:text-white border border-white/10 rounded-xl hover:bg-white/5 transition-all"
+                      >
+                        Send Another
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSendModal(false);
+                          setSendReceipt(null);
+                          setReceiverAddress('');
+                          setSendAmount('');
+                          setSendError('');
+                          setSendStep(1);
+                        }}
+                        className="px-5 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-xl transition-all shadow-lg shadow-purple-500/20"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* Success Toast */}
+      {successToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-emerald-600/90 text-white px-4 py-2.5 rounded-xl shadow-xl shadow-emerald-950/50 backdrop-blur-md border border-emerald-400/30 text-xs font-medium animate-fade-in flex items-center space-x-2">
+          <Check className="h-4 w-4 text-emerald-300" />
+          <span>{successToast}</span>
+        </div>
+      )}
     </div>
   );
 };

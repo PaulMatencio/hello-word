@@ -7,7 +7,8 @@ import { MessagePublisher } from '@/components/MessagePublisher';
 import { WalletStudio } from '@/components/WalletStudio';
 import { ContractManager } from '@/components/ContractManager';
 import { WebTerminal } from '@/components/WebTerminal';
-import { TransactionFeed, TxRecord } from '@/components/TransactionFeed';
+import { TransactionFeed } from '@/components/TransactionFeed';
+import { TxRecord } from '@/src/types/tx';
 import { SyncDashboardModal } from '@/components/SyncDashboardModal';
 
 export default function Home() {
@@ -149,6 +150,29 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [contractAddress, seed, fetchContractState, fetchWalletStatus, fetchSystemHealth]);
 
+  // Fetch persisted transaction history on mount
+  useEffect(() => {
+    const fetchTxHistory = async () => {
+      try {
+        const res = await fetch('/api/wallet/history');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data)) {
+          const persisted: TxRecord[] = data.data.map((hash: string, idx: number) => ({
+            id: `persisted-${idx}`,
+            txHash: hash,
+            blockHeight: null,
+            message: '',
+            timestamp: new Date().toISOString(),
+          }));
+          setTransactions(persisted);
+        }
+      } catch (err) {
+        console.error('Failed to load transaction history:', err);
+      }
+    };
+    fetchTxHistory();
+  }, []);
+
   const handleTxSuccess = (result: any) => {
     const newTx: TxRecord = {
       id: Math.random().toString(),
@@ -156,6 +180,7 @@ export default function Home() {
       blockHeight: result.blockHeight,
       message: result.message,
       timestamp: result.timestamp || new Date().toISOString(),
+      dustPaid: result.dustPaid,
       durationMs: result.durationMs,
     };
     setTransactions((prev) => [newTx, ...prev]);
@@ -163,6 +188,19 @@ export default function Home() {
     setLastUpdated(new Date().toISOString());
     // Refresh wallet balances
     fetchWalletStatus();
+  };
+
+  // Handle transaction failures and record them in the feed
+  const handleTxError = (err: any) => {
+    const errorTx: TxRecord = {
+      id: Math.random().toString(),
+      txHash: '',
+      blockHeight: null,
+      message: '',
+      timestamp: new Date().toISOString(),
+      error: err.message || 'Transaction failed',
+    };
+    setTransactions((prev) => [errorTx, ...prev]);
   };
 
   const handleDeploySuccess = (newAddress: string) => {
@@ -205,6 +243,7 @@ export default function Home() {
                 seed={seed}
                 contractAddress={contractAddress}
                 onSuccess={handleTxSuccess}
+                onError={handleTxError}
                 dustBalance={walletStatus?.dustBalance || '0'}
               />
             </div>

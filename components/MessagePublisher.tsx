@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Send, ShieldAlert, CheckCircle2, Loader2, Sparkles, ArrowRight, Clock, Box } from 'lucide-react';
+import { Send, ShieldAlert, CheckCircle2, Loader2, Sparkles, ArrowRight, Clock, Box, Flame, Zap } from 'lucide-react';
 
 interface MessagePublisherProps {
   seed: string;
   contractAddress: string;
   onSuccess: (result: any) => void;
+  onError?: (error: any) => void;
   dustBalance: string;
 }
 
@@ -16,6 +17,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   seed,
   contractAddress,
   onSuccess,
+  onError,
   dustBalance,
 }) => {
   const [message, setMessage] = useState('');
@@ -84,6 +86,9 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
       clearTimeout(timer3);
       setStage('error');
       setErrorMsg(err.message || 'An unexpected error occurred.');
+      if (onError) {
+        onError(err);
+      }
     }
   };
 
@@ -224,17 +229,28 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
               <p className="text-slate-300">
                 Message <span className="font-semibold text-white">&ldquo;{txResult.message}&rdquo;</span> stored to ledger.
               </p>
-              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono">
-                <div className="bg-midnight-950/80 p-2 rounded border border-white/5">
-                  <span className="text-slate-500 block text-[10px] uppercase">Transaction Hash</span>
+              <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono">
+                <div className="bg-midnight-950/80 p-2.5 rounded-xl border border-white/5">
+                  <span className="text-slate-500 block text-[10px] uppercase font-sans font-semibold">Transaction Hash</span>
                   <span className="text-slate-200 truncate block text-[11px]" title={txResult.txHash}>
                     {txResult.txHash}
                   </span>
                 </div>
-                <div className="bg-midnight-950/80 p-2 rounded border border-white/5">
-                  <span className="text-slate-500 block text-[10px] uppercase">Block Height</span>
+                <div className="bg-midnight-950/80 p-2.5 rounded-xl border border-white/5">
+                  <span className="text-slate-500 block text-[10px] uppercase font-sans font-semibold">Block Height</span>
                   <span className="text-slate-200 block text-[11px]">
                     #{txResult.blockHeight?.toLocaleString() || 'Pending'}
+                  </span>
+                </div>
+                <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 p-2.5 rounded-xl border border-amber-500/30">
+                  <span className="text-amber-400 block text-[10px] uppercase font-sans font-semibold flex items-center gap-1">
+                    <Flame className="h-3.5 w-3.5 text-amber-400 animate-pulse" />
+                    <span>DUST Gas Used</span>
+                  </span>
+                  <span className="text-amber-200 block text-[12px] font-bold mt-0.5">
+                    {txResult.dustPaid && txResult.dustPaid !== '0'
+                      ? `${BigInt(txResult.dustPaid).toLocaleString()} DUST`
+                      : 'Covered via DUST UTXO'}
                   </span>
                 </div>
               </div>

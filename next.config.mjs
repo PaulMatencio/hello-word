@@ -15,13 +15,24 @@ const nextConfig = {
     'level',
     'classic-level'
   ],
-  webpack: (config) => {
+  webpack: (config, { isServer }) => {
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,
       topLevelAwait: true,
       layers: true,
     };
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        os: false,
+        crypto: false,
+        stream: false,
+        util: false,
+      };
+    }
     return config;
   },
 };

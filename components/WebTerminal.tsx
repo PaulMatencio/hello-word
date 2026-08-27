@@ -121,6 +121,9 @@ export const WebTerminal: React.FC<WebTerminalProps> = ({
         addLine('✅ Message stored successfully on Midnight Preprod!', 'success');
         addLine(`   Transaction Hash: ${data.data.txHash}`, 'info');
         addLine(`   Block Height: #${data.data.blockHeight}`, 'info');
+        if (data.data.dustPaid && data.data.dustPaid !== '0') {
+          addLine(`   DUST Gas Used: ${BigInt(data.data.dustPaid).toLocaleString()} DUST`, 'warning');
+        }
         onRefreshState();
       } catch (err: any) {
         addLine(`❌ Error: ${err.message}`, 'error');

@@ -1,4 +1,6 @@
+export const runtime = 'nodejs';
 import { NextResponse } from 'next/server';
+
 import { getSystemHealth, getDefaultDeployment } from '@/src/lib/midnight-service';
 
 export const dynamic = 'force-dynamic';

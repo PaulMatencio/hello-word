@@ -6,13 +6,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
+import { FileTransactionHistoryStorage } from './file-transaction-history-storage';
 import * as Rx from 'rxjs';
 
 // Midnight SDK imports
 import { findDeployedContract, deployContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
-import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
+// import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider'; // Disabled due to native build issue
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { setNetworkId, getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
@@ -29,6 +30,14 @@ import {
     NoOpTransactionHistoryStorage,
     PublicKey,
 } from '@midnight-ntwrk/wallet-sdk';
+
+import {
+    UnshieldedAddress,
+    MidnightBech32m,
+    mainnet
+} from '@midnight-ntwrk/wallet-sdk-address-format';
+import { signatureVerifyingKey, addressFromKey } from '@midnight-ntwrk/ledger-v7';
+
 
 // Polyfill WebSocket for Midnight GraphQL subscriptions in Node.js
 if (typeof globalThis.WebSocket === 'undefined' || !(globalThis as any)._wsPolyfilled) {
@@ -53,6 +62,21 @@ const PRIVATE_STATE_PASSWORD = process.env.PRIVATE_STATE_PASSWORD?.trim() || 'He
 // Resolve project root & contract paths
 const projectRoot = process.cwd();
 const zkConfigPath = path.resolve(projectRoot, 'contracts', 'managed', 'hello-world');
+// Simple JSON cache for last known balances (persisted across restarts)
+const WALLET_CACHE_PATH = path.resolve(projectRoot, 'wallet-cache.json');
+function loadWalletCache() {
+    try {
+        const raw = fs.readFileSync(WALLET_CACHE_PATH, 'utf-8');
+        return JSON.parse(raw);
+    } catch {
+        return {};
+    }
+}
+function saveWalletCache(cache: Record<string, any>) {
+    try {
+        fs.writeFileSync(WALLET_CACHE_PATH, JSON.stringify(cache, null, 2));
+    } catch { }
+}
 
 // @ts-ignore
 import * as HelloWorldContractModule from '../../contracts/managed/hello-world/contract/index.js';
@@ -82,6 +106,7 @@ interface CachedWalletContext {
     lastActive: number;
     lastKnownNightBalance?: string;
     lastKnownDustBalance?: string;
+    lastDustFee?: bigint;
 }
 
 const globalForMidnight = globalThis as unknown as {
@@ -109,6 +134,14 @@ export async function getOrCreateWallet(seed: string): Promise<CachedWalletConte
     const existing = walletCache.get(cleanSeed);
     if (existing) {
         existing.lastActive = Date.now();
+        // Hydrate cached balances from persisted file if they are missing
+        const persisted = loadWalletCache();
+        if (persisted.dustBalance && !existing.lastKnownDustBalance) {
+            existing.lastKnownDustBalance = persisted.dustBalance;
+        }
+        if (persisted.nightBalance && !existing.lastKnownNightBalance) {
+            existing.lastKnownNightBalance = persisted.nightBalance;
+        }
         return existing;
     }
 
@@ -123,7 +156,7 @@ export async function getOrCreateWallet(seed: string): Promise<CachedWalletConte
         indexerClientConnection: { indexerHttpUrl: CONFIG.indexer, indexerWsUrl: CONFIG.indexerWS },
         provingServerUrl: new URL(CONFIG.proofServer),
         relayURL: new URL(CONFIG.node.replace(/^http/, 'ws')),
-        txHistoryStorage: new NoOpTransactionHistoryStorage(),
+        txHistoryStorage: new FileTransactionHistoryStorage(),
         costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
     };
 
@@ -145,6 +178,11 @@ export async function getOrCreateWallet(seed: string): Promise<CachedWalletConte
         lastActive: Date.now(),
     };
 
+    // Load any persisted balances for a fresh wallet
+    const persisted = loadWalletCache();
+    if (persisted.dustBalance) ctx.lastKnownDustBalance = persisted.dustBalance;
+    if (persisted.nightBalance) ctx.lastKnownNightBalance = persisted.nightBalance;
+
     walletCache.set(cleanSeed, ctx);
     return ctx;
 }
@@ -154,12 +192,34 @@ export async function createProviders(walletCtx: CachedWalletContext) {
         getCoinPublicKey: () => walletCtx.shieldedSecretKeys.coinPublicKey,
         getEncryptionPublicKey: () => walletCtx.shieldedSecretKeys.encryptionPublicKey,
         async balanceTx(tx: any, ttl?: Date) {
+            const preState: any = await Rx.firstValueFrom(walletCtx.wallet.state()).catch(() => null);
+            const preDust = BigInt(preState?.dust?.balance?.(new Date()) ?? 0);
+
             const recipe = await walletCtx.wallet.balanceUnboundTransaction(
                 tx,
                 { shieldedSecretKeys: walletCtx.shieldedSecretKeys, dustSecretKey: walletCtx.dustSecretKey },
                 { ttl: ttl ?? new Date(Date.now() + 30 * 60 * 1000) },
             );
-            return walletCtx.wallet.finalizeRecipe(recipe);
+            const finalized = await walletCtx.wallet.finalizeRecipe(recipe);
+
+            try {
+                const fee = await walletCtx.wallet.calculateTransactionFee(finalized);
+                if (fee && typeof fee === 'bigint' && fee > 0n) {
+                    walletCtx.lastDustFee = fee;
+                }
+            } catch {
+                try {
+                    const postState: any = await Rx.firstValueFrom(walletCtx.wallet.state()).catch(() => null);
+                    const postDust = BigInt(postState?.dust?.balance?.(new Date()) ?? 0);
+                    if (preDust > postDust) {
+                        walletCtx.lastDustFee = preDust - postDust;
+                    }
+                } catch {
+                    // Fallback
+                }
+            }
+
+            return finalized;
         },
         submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
     };
@@ -167,12 +227,23 @@ export async function createProviders(walletCtx: CachedWalletContext) {
     const zkConfigProvider = new NodeZkConfigProvider(zkConfigPath);
     const accountId = walletCtx.unshieldedKeystore.getBech32Address().toString();
 
-    return {
-        privateStateProvider: levelPrivateStateProvider({
+    // Lazy-load private state provider to avoid native build issues
+    let privateStateProvider;
+    try {
+        const { levelPrivateStateProvider } = await import('@midnight-ntwrk/midnight-js-level-private-state-provider');
+        privateStateProvider = levelPrivateStateProvider({
             privateStateStoreName: 'hello-world-state',
             accountId,
             privateStoragePasswordProvider: () => PRIVATE_STATE_PASSWORD,
-        }),
+        });
+    } catch {
+        console.warn('levelPrivateStateProvider unavailable, using dummy provider');
+        privateStateProvider = () => ({});
+    }
+
+    // Return the assembled providers object
+    return {
+        privateStateProvider,
         publicDataProvider: indexerPublicDataProvider(CONFIG.indexer, CONFIG.indexerWS),
         zkConfigProvider,
         proofProvider: httpClientProofProvider(CONFIG.proofServer, zkConfigProvider),
@@ -278,6 +349,12 @@ export async function getWalletStatus(seed: string) {
         dustBalance = walletCtx.lastKnownDustBalance;
     }
 
+    // Persist the latest balances to the cache file
+    saveWalletCache({
+        dustBalance: walletCtx.lastKnownDustBalance,
+        nightBalance: walletCtx.lastKnownNightBalance,
+    });
+
     const unshieldedProgress = (state as any)?.unshielded?.progress;
     const shieldedProgress = (state as any)?.shielded?.progress;
     const dustProgress = (state as any)?.dust?.progress;
@@ -344,6 +421,8 @@ export async function getWalletStatus(seed: string) {
  */
 export async function registerForDust(seed: string) {
     const walletCtx = await getOrCreateWallet(seed);
+    // Ensure wallet is synced before registering for DUST generation
+    await walletCtx.wallet.waitForSyncedState();
 
     // Wait for unshielded available coins (does not require DUST historical indexer scan to finish)
     let state: any = await Rx.firstValueFrom(
@@ -422,6 +501,7 @@ export async function storeContractMessage(seed: string, message: string, contra
     const startTime = Date.now();
     const tx = await (contract as any).callTx.storeMessage(message.trim());
     const durationMs = Date.now() - startTime;
+    const dustPaid = walletCtx.lastDustFee ? walletCtx.lastDustFee.toString() : '0';
 
     return {
         success: true,
@@ -429,6 +509,7 @@ export async function storeContractMessage(seed: string, message: string, contra
         contractAddress: targetAddress,
         txHash: tx.public.txHash,
         blockHeight: tx.public.blockHeight,
+        dustPaid,
         durationMs,
         timestamp: new Date().toISOString(),
     };
@@ -440,8 +521,9 @@ export async function storeContractMessage(seed: string, message: string, contra
 export async function deployNewContract(seed: string) {
     const { compiledContract } = await getContractArtifacts();
     const walletCtx = await getOrCreateWallet(seed);
-
+    // Ensure wallet is synced before creating a deployment transaction
     await walletCtx.wallet.waitForSyncedState();
+
     const providers = await createProviders(walletCtx);
 
     const startTime = Date.now();
@@ -454,12 +536,14 @@ export async function deployNewContract(seed: string) {
 
     const contractAddress = deployed.deployTxData.public.contractAddress;
     const durationMs = Date.now() - startTime;
+    const dustPaid = walletCtx.lastDustFee ? walletCtx.lastDustFee.toString() : '0';
 
     saveDeployment(contractAddress, seed);
 
     return {
         success: true,
         contractAddress,
+        dustPaid,
         durationMs,
         network: 'preprod',
         deployedAt: new Date().toISOString(),
@@ -519,4 +603,134 @@ export async function getSystemHealth() {
         deployment,
         faucetUrl: CONFIG.faucet,
     };
+}
+
+/**
+ * Sends unshielded tNIGHT tokens to a specified address.
+ * This is a placeholder implementation; replace with actual transfer logic using the Midnight SDK.
+ */
+export async function sendUnshieldedTNight(seed: string, receiver: string, amount: string) {
+    // Ensure wallet is initialized
+    const walletCtx = await getOrCreateWallet(seed);
+    const wallet = walletCtx.wallet;
+    if (!wallet) {
+        throw new Error('Wallet not initialized');
+    }
+
+    if (!receiver) {
+        throw new Error('Receiver address is required');
+    }
+    const amtNum = Number(amount);
+    if (isNaN(amtNum) || amtNum <= 0) {
+        throw new Error('Amount must be a positive number');
+    }
+    // Convert to base units (6 decimals)
+    const amountUnits = BigInt(Math.floor(amtNum * 1_000_000));
+
+    // Ensure wallet is synced
+    await wallet.waitForSyncedState();
+
+    // Check balance
+    const status = await getWalletStatus(seed);
+    const balance = BigInt(status.tNightBalance);
+    if (amountUnits > balance) {
+        throw new Error(`Insufficient tNIGHT balance (Available: ${status.tNightBalance}, Required: ${amountUnits})`);
+    }
+
+    // Decode the receiver address (supports Bech32m address or 64-char hex)
+    const networkId = getNetworkId();
+    let receiverAddress: UnshieldedAddress;
+    try {
+        receiverAddress = MidnightBech32m.parse(receiver.trim()).decode(UnshieldedAddress, networkId);
+    } catch {
+        if (/^[0-9a-fA-F]{64}$/.test(receiver.trim())) {
+            receiverAddress = new UnshieldedAddress(Buffer.from(receiver.trim(), 'hex'));
+        } else {
+            throw new Error(`Invalid receiver unshielded address for network '${networkId}': ${receiver}`);
+        }
+    }
+
+    // Create unshielded transfer transaction recipe via WalletFacade
+    const recipe = await wallet.transferTransaction(
+        [
+            {
+                type: 'unshielded',
+                outputs: [
+                    {
+                        type: unshieldedToken().raw,
+                        receiverAddress,
+                        amount: amountUnits,
+                    },
+                ],
+            },
+        ],
+        {
+            shieldedSecretKeys: walletCtx.shieldedSecretKeys,
+            dustSecretKey: walletCtx.dustSecretKey,
+        },
+        {
+            ttl: new Date(Date.now() + 30 * 60 * 1000),
+            payFees: true,
+        },
+    );
+
+    // Sign the transfer recipe with the unshielded keystore
+    const signedRecipe = await wallet.signRecipe(
+        recipe,
+        (payload: Uint8Array) => walletCtx.unshieldedKeystore.signData(payload),
+    );
+
+    // Finalize recipe (generate ZK proofs & bind) and submit to the Midnight network
+    const startTime = Date.now();
+    const finalized = await wallet.finalizeRecipe(signedRecipe);
+    const txId = await wallet.submitTransaction(finalized);
+    const durationMs = Date.now() - startTime;
+
+    let dustPaid = '0';
+    try {
+        const fee = await wallet.calculateTransactionFee(finalized);
+        if (fee && typeof fee === 'bigint' && fee > 0n) {
+            dustPaid = fee.toString();
+        }
+    } catch {
+        dustPaid = walletCtx.lastDustFee ? walletCtx.lastDustFee.toString() : '0';
+    }
+
+    return {
+        txHash: txId,
+        dustPaid,
+        amount,
+        amountUnits: amountUnits.toString(),
+        receiver: receiver.trim(),
+        durationMs,
+        network: networkId,
+        timestamp: new Date().toISOString(),
+    };
+}
+
+
+
+export function deriveUnshieldedAddressFromSeed(seed: string, network: 'mainnet' | 'preprod' | 'preview' = 'preprod') {
+    // --- NEW: Derive the unshielded address ---
+    // 1. Get the public key from the private key
+    const publicKey = signatureVerifyingKey(seed);
+
+    // 2. Derive the 32-byte address from the public key
+    const addressHex = addressFromKey(publicKey);
+
+    // 3. Create an UnshieldedAddress object
+    const unshieldedAddress = new UnshieldedAddress(Buffer.from(addressHex, 'hex'));
+
+    // 4. Encode it as a Bech32m string
+    // Use 'mainnet' for mainnet, or 'preprod' / 'preview' for testnets
+    if (network === 'mainnet') {
+        return MidnightBech32m.encode('mainnet', unshieldedAddress).toString();
+    } else if (network === 'preprod') {
+        return MidnightBech32m.encode('preprod', unshieldedAddress).toString();
+    } else if (network === 'preview') {
+        return MidnightBech32m.encode('preview', unshieldedAddress).toString();
+    } else {
+        throw new Error('Invalid network');
+    }
+
 }

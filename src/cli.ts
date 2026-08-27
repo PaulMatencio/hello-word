@@ -92,6 +92,8 @@ async function createWallet(seed: string) {
     return { wallet, shieldedSecretKeys, dustSecretKey, unshieldedKeystore };
 }
 
+let lastCliDustFee: bigint | null = null;
+
 async function createProviders(walletCtx: Awaited<ReturnType<typeof createWallet>>) {
     const walletProvider = {
         getCoinPublicKey: () => walletCtx.shieldedSecretKeys.coinPublicKey,
@@ -102,7 +104,16 @@ async function createProviders(walletCtx: Awaited<ReturnType<typeof createWallet
                 { shieldedSecretKeys: walletCtx.shieldedSecretKeys, dustSecretKey: walletCtx.dustSecretKey },
                 { ttl: ttl ?? new Date(Date.now() + 30 * 60 * 1000) },
             );
-            return walletCtx.wallet.finalizeRecipe(recipe);
+            const finalized = await walletCtx.wallet.finalizeRecipe(recipe);
+            try {
+                const fee = await walletCtx.wallet.calculateTransactionFee(finalized);
+                if (fee && fee > 0n) {
+                    lastCliDustFee = fee;
+                }
+            } catch {
+                // Ignore fallback
+            }
+            return finalized;
         },
         submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
     };
@@ -188,7 +199,12 @@ async function main() {
                         const tx = await (contract as any).callTx.storeMessage(message);
                         console.log(` ✅ Message stored!`);
                         console.log(` Transaction: ${tx.public.txHash}`);
-                        console.log(` Block: ${tx.public.blockHeight}\n`);
+                        console.log(` Block: ${tx.public.blockHeight}`);
+                        if (lastCliDustFee && lastCliDustFee > 0n) {
+                            console.log(` DUST Gas Used: ${lastCliDustFee.toLocaleString()} DUST\n`);
+                        } else {
+                            console.log('');
+                        }
                     } catch (e) {
                         console.error(` ❌ Error: ${e instanceof Error ? e.message : e}\n`);
                     }

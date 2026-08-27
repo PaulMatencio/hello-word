@@ -138,7 +138,32 @@ curl -s -X POST http://localhost:3000/api/wallet/send-shielded
 
 ---
 
-## 6. How to Check DUST Generation
+
+## 6. Transaction phases 
+
+[ 1. Sync Wallet ] ➔ [ 2. ZK Proof ] ➔ [ 3. Balance DUST ] ➔ [ 4. Block Confirmation ]
+
+For a deep dive into each phase, the specific API calls, wallet state transitions, ZK proof generation mechanisms, and on-chain confirmation timelines, refer to the detailed diagnostics guide.
+
+a. 🔄 Sync Wallet
+What happens: The local wallet checks and synchronizes its three state machines (Unshielded, Shielded Zswap, and DUST Engine) with the Midnight Preprod Indexer.
+Why: To ensure the transaction builds against the latest block tip, unspent UTXOs, and commitment trees.
+
+b. ⚡ ZK Proof Generation
+What happens: The storeMessage circuit logic is computed locally, and a request is sent to the local Midnight Proof Server (http://127.0.0.1:6300).
+Why: Generates the cryptographic Zero-Knowledge SNARK proof proving the contract transition is valid without leaking private state.
+
+c. ⛽ Balance DUST (Gas Fee Allocation)
+What happens: The wallet calls balanceUnboundTransaction, allocating your accrued DUST coins/UTXOs to pay the network transaction gas fee.
+Why: Midnight transactions require DUST as fuel. If DUST balance is 0, the transaction pauses here until sufficient DUST is available.
+
+d. 🔗 Signing, Broadcast & Block Confirmation
+What happens:
+The balanced transaction recipe is finalized and signed with your derived private keys.
+The signed transaction is submitted to the Midnight Preprod Node RPC (https://rpc.preprod.midnight.network).
+The DApp waits for the transaction to be mined and confirmed in a new Midnight Preprod block (typically ~15–45 seconds).
+
+## 7. How to Check DUST Generation
 
 ### A. Query Midnight Preprod Epoch Progress via GraphQL
 
@@ -201,3 +226,5 @@ This response confirms two important things:
 2.Epoch Distribution: On the Midnight network, after registering UTXOs for DUST or after spending DUST in a transaction:
    - Epochs on Midnight Preprod last 30 minutes (durationSeconds: 1800).
    - The DUST state machine activates the accrual calculation across the epoch boundary and updates the ledger's DUST commitment tree.
+
+
