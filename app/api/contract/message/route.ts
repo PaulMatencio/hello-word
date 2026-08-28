@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { storeContractMessage } from '@/src/lib/midnight-service';
+import { container } from '@/src/infrastructure/di/container';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ success: false, error: 'Message cannot be empty.' }, { status: 400 });
         }
 
-        const result = await storeContractMessage(seed, message, contractAddress);
+        const result = await container.storeMessageUseCase.execute({ seed, message, contractAddress });
         return NextResponse.json({ success: true, data: result });
     } catch (error: any) {
         console.error('Error storing message on-chain:', error);

@@ -151,27 +151,42 @@ export default function Home() {
   }, [contractAddress, seed, fetchContractState, fetchWalletStatus, fetchSystemHealth]);
 
   // Fetch persisted transaction history on mount
-  useEffect(() => {
-    const fetchTxHistory = async () => {
-      try {
-        const res = await fetch('/api/wallet/history');
-        const data = await res.json();
-        if (data.success && Array.isArray(data.data)) {
-          const persisted: TxRecord[] = data.data.map((hash: string, idx: number) => ({
-            id: `persisted-${idx}`,
-            txHash: hash,
-            blockHeight: null,
-            message: '',
-            timestamp: new Date().toISOString(),
-          }));
-          setTransactions(persisted);
-        }
-      } catch (err) {
-        console.error('Failed to load transaction history:', err);
+  const fetchTxHistory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/wallet/history');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        const persisted: TxRecord[] = data.data.map((item: any, idx: number) => {
+          if (typeof item === 'string') {
+            return {
+              id: `persisted-${idx}`,
+              txHash: item,
+              blockHeight: null,
+              message: '',
+              timestamp: new Date().toISOString(),
+            };
+          }
+          return {
+            id: item.id || `persisted-${idx}`,
+            txHash: item.txHash,
+            blockHeight: item.blockHeight ?? null,
+            message: item.message || '',
+            timestamp: item.timestamp || new Date().toISOString(),
+            dustPaid: item.dustPaid,
+            durationMs: item.durationMs,
+            error: item.error,
+          };
+        });
+        setTransactions(persisted);
       }
-    };
-    fetchTxHistory();
+    } catch (err) {
+      console.error('Failed to load transaction history:', err);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchTxHistory();
+  }, [fetchTxHistory]);
 
   const handleTxSuccess = (result: any) => {
     const newTx: TxRecord = {
@@ -186,8 +201,9 @@ export default function Home() {
     setTransactions((prev) => [newTx, ...prev]);
     setCurrentMessage(result.message);
     setLastUpdated(new Date().toISOString());
-    // Refresh wallet balances
+    // Refresh wallet balances and persistent history
     fetchWalletStatus();
+    fetchTxHistory();
   };
 
   // Handle transaction failures and record them in the feed
@@ -245,6 +261,8 @@ export default function Home() {
                 onSuccess={handleTxSuccess}
                 onError={handleTxError}
                 dustBalance={walletStatus?.dustBalance || '0'}
+                isSynced={walletStatus?.isSynced ?? false}
+                syncPercentage={walletStatus?.syncProgress?.percentage ?? 0}
               />
             </div>
 

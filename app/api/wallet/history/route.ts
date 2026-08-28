@@ -1,16 +1,14 @@
 import { NextResponse } from 'next/server';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { container } from '@/src/infrastructure/di/container';
+
+export const dynamic = 'force-dynamic';
 
 /**
- * API route returns an array of transaction hashes persisted by FileTransactionHistoryStorage.
- * The storage writes to `tx-history.json` at the project root.
+ * API route returns the list of transaction records persisted across sessions.
  */
 export async function GET() {
-  const filePath = path.resolve(process.cwd(), 'tx-history.json');
   try {
-    const data = await fs.promises.readFile(filePath, 'utf-8');
-    const records = JSON.parse(data);
+    const records = await container.txHistoryStorage.getTxRecords();
     return NextResponse.json({ success: true, data: records });
   } catch (err) {
     return NextResponse.json({ success: true, data: [] });

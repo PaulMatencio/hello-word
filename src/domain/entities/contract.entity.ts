@@ -1,0 +1,48 @@
+/**
+ * Domain Entities: Contract & Transactions
+ */
+
+export interface ContractDeploymentRecord {
+    contractAddress: string;
+    deployedAt?: string;
+    deployerSeed?: string;
+}
+
+export interface ContractMessageSnapshot {
+    contractAddress: string;
+    found: boolean;
+    message: string;
+    raw?: any;
+    lastChecked: string;
+}
+
+export interface TransactionExecutionReceipt {
+    success: boolean;
+    message?: string;
+    contractAddress?: string;
+    txHash: string;
+    blockHeight?: number;
+    dustPaid: string;
+    durationMs: number;
+    timestamp: string;
+}
+
+export interface DeploymentExecutionReceipt {
+    success: boolean;
+    contractAddress: string;
+    dustPaid: string;
+    durationMs: number;
+    network: string;
+    deployedAt: string;
+}
+
+export interface TransferExecutionReceipt {
+    txHash: string;
+    dustPaid: string;
+    amount: string;
+    amountUnits: string;
+    receiver: string;
+    durationMs: number;
+    network: string;
+    timestamp: string;
+}

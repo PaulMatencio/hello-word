@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { registerForDust } from '@/src/lib/midnight-service';
+import { container } from '@/src/infrastructure/di/container';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ success: false, error: 'Seed is required.' }, { status: 400 });
         }
 
-        const result = await registerForDust(seed);
+        const result = await container.registerDustUseCase.execute({ seed });
         return NextResponse.json({ success: true, data: result });
     } catch (error: any) {
         console.error('Error registering for DUST:', error);

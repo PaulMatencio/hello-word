@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { deployNewContract } from '@/src/lib/midnight-service';
+import { container } from '@/src/infrastructure/di/container';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ success: false, error: 'Seed is required to deploy a contract.' }, { status: 400 });
         }
 
-        const result = await deployNewContract(seed);
+        const result = await container.deployContractUseCase.execute({ seed });
         return NextResponse.json({ success: true, data: result });
     } catch (error: any) {
         console.error('Error deploying contract:', error);

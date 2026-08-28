@@ -155,9 +155,24 @@ npm run deploy
 │   ├── hello-world.compact               # Compact smart contract source code
 │   └── managed/hello-world/              # Compiled ZK circuits, keys, and JS runtime
 ├── src/
-│   ├── lib/midnight-service.ts           # Central Midnight SDK & wallet service layer
+│   ├── domain/                           # Enterprise domain models, errors & port interfaces
+│   │   ├── entities/                     # WalletSnapshot, ContractDeployment, TxReceipt
+│   │   ├── errors/                       # WalletNotSyncedError, InsufficientDustError
+│   │   └── ports/                        # IWalletGateway, IContractGateway, ISystemGateway
+│   ├── application/                      # Use Cases / Application Business Rules
+│   │   ├── dto/                          # Use case input/output contracts
+│   │   └── use-cases/                    # StoreMessage, DeployContract, SendTNight, RegisterDust
+│   ├── infrastructure/                   # Midnight SDK adapters, drivers & composition root
+│   │   ├── config/                       # Preprod endpoints & network constants
+│   │   ├── midnight/                     # Wallet & Contract Midnight SDK adapters
+│   │   ├── persistence/                  # Persistent file & deployment storage
+│   │   └── di/container.ts               # Dependency injection container & composition root
+│   ├── lib/
+│   │   ├── midnight-service.ts           # Backward-compatible service facade
+│   │   └── file-private-state-provider.ts # File-based private state persistence
 │   ├── cli.ts                            # Terminal interactive CLI script
-│   └── deploy.ts                         # Terminal contract deployment script
+│   ├── deploy.ts                         # Terminal contract deployment script
+│   └── seed.ts                           # Offline wallet seed & key derivation tool
 ├── deployment.json                       # Active contract address & seed metadata
 ├── docker-compose.yml                    # Midnight Proof Server container configuration
 ├── troubleshooting-commands.md           # Comprehensive CLI diagnostics, API & GraphQL query guide
@@ -204,3 +219,10 @@ Key topics covered:
 - **Node RPC**: `https://rpc.preprod.midnight.network`
 - **Local Proof Server**: `http://127.0.0.1:6300` (Docker container running `midnightntwrk/proof-server:8.1.0`)
 - **Key Derivation**: HD Wallet derivation across `Roles.Zswap` (shielded transactions), `Roles.NightExternal` (public identity / Bech32 address), and `Roles.Dust` (fee balancing).
+- **Private State Persistence & Dual Storage**:
+  - **LevelDB Provider**: Uses `@midnight-ntwrk/midnight-js-level-private-state-provider` with AES-256-GCM encrypted persistence stored in `/midnight-level-db/`.
+  - **File Storage Fallback**: Implements a dedicated `FilePrivateStateProvider` (`private-state-store.json`) for seamless persistence across Next.js dev server reloads and multi-worker environments without native LevelDB file-lock conflicts.
+  - **Next.js Server External Packages**: Configured via `serverExternalPackages` in `next.config.mjs` to allow native C++ bindings (`classic-level`) and Midnight packages (`@midnight-ntwrk/compact-js`, `@midnight-ntwrk/ledger-v8`) to load directly via Node.js runtime.
+- **Local Secret & Data Isolation**:
+  - All local state files (`wallet-cache.json`, `tx-history.json`, `private-state-store.json`, `deployment.json`, and `/midnight-level-db/`) are excluded in `.gitignore` to prevent sensitive credentials and private keys from being committed.
+

@@ -43,3 +43,7 @@ next-env.d.ts
 deployment.json
 wallet-cache.json
 tx-history.json
+private-state-store.json
+wallet-serialized-state.json
+.wallet-state/
+

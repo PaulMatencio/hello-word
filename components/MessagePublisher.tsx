@@ -9,6 +9,8 @@ interface MessagePublisherProps {
   onSuccess: (result: any) => void;
   onError?: (error: any) => void;
   dustBalance: string;
+  isSynced?: boolean;
+  syncPercentage?: number;
 }
 
 type TxStage = 'idle' | 'syncing' | 'proving' | 'balancing' | 'submitting' | 'confirmed' | 'error';
@@ -19,6 +21,8 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   onSuccess,
   onError,
   dustBalance,
+  isSynced = false,
+  syncPercentage = 0,
 }) => {
   const [message, setMessage] = useState('');
   const [stage, setStage] = useState<TxStage>('idle');
@@ -31,13 +35,24 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
     if (!message.trim()) return;
     if (!seed.trim()) {
       setErrorMsg('Please connect your wallet seed first in the Wallet Studio below.');
+      setStage('error');
+      return;
+    }
+    if (!isSynced) {
+      setErrorMsg(`Wallet is not synchronized (${syncPercentage}%). Blockchain interactions are blocked until synchronization is 100% complete.`);
+      setStage('error');
+      return;
+    }
+    if (dustBalance === '0' || !dustBalance) {
+      setErrorMsg('Zero DUST gas balance. Transaction fee balancing requires DUST. Please click "Register for DUST" in the Wallet Studio below and allow time for DUST to accrue.');
+      setStage('error');
       return;
     }
 
     setErrorMsg(null);
     setTxResult(null);
     setStage('syncing');
-    setStatusText('Syncing wallet state with Midnight Preprod...');
+    setStatusText('Checking synchronization with Midnight Preprod...');
 
     // Simulate progress milestones as the backend performs the ZK workflow
     const timer1 = setTimeout(() => {
@@ -148,17 +163,42 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
           ))}
         </div>
 
+        {/* Sync Status Banner */}
+        {!isSynced && (
+          <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3.5 text-xs text-amber-200 flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+              </span>
+              <span>
+                Wallet is currently synchronizing with Midnight ({syncPercentage}%). Transactions are blocked until 100% synchronized.
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Submit Action */}
         <div className="pt-2">
           <button
             type="submit"
-            disabled={isSubmitting || !message.trim()}
+            disabled={isSubmitting || !message.trim() || !isSynced || dustBalance === '0'}
             className="w-full sm:w-auto inline-flex items-center justify-center space-x-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-500 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/30 hover:shadow-indigo-600/50 hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:hover:scale-100 cursor-pointer disabled:cursor-not-allowed"
           >
             {isSubmitting ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin text-white" />
                 <span>Processing Circuit Transaction...</span>
+              </>
+            ) : !isSynced ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-amber-300" />
+                <span>Wallet Synchronizing ({syncPercentage}%)...</span>
+              </>
+            ) : dustBalance === '0' ? (
+              <>
+                <Flame className="h-4 w-4 text-amber-400" />
+                <span>DUST Gas Required</span>
               </>
             ) : (
               <>
@@ -259,13 +299,13 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
         </div>
       )}
 
-      {/* Error Notification */}
-      {stage === 'error' && errorMsg && (
+      {/* Error / Warning Notification */}
+      {errorMsg && (
         <div className="mt-6 rounded-xl bg-rose-950/40 p-5 border border-rose-500/30">
           <div className="flex items-start space-x-3">
             <ShieldAlert className="h-6 w-6 text-rose-400 shrink-0 mt-0.5" />
             <div className="space-y-1 text-xs">
-              <h4 className="text-sm font-bold text-rose-300">Transaction Failed</h4>
+              <h4 className="text-sm font-bold text-rose-300">Transaction Not Permitted</h4>
               <p className="text-slate-300 leading-relaxed">{errorMsg}</p>
             </div>
           </div>
