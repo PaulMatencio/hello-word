@@ -33,7 +33,8 @@ const nextConfig = {
     '@midnight-ntwrk/ledger-v8',
     'ws',
     'level',
-    'classic-level'
+    'classic-level',
+    'redis'
   ],
   webpack: (config, { isServer }) => {
     config.experiments = {

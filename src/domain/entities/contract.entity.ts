@@ -6,6 +6,7 @@ export interface ContractDeploymentRecord {
     contractAddress: string;
     deployedAt?: string;
     deployerSeed?: string;
+    network?: string;
 }
 
 export interface ContractMessageSnapshot {

@@ -54,7 +54,7 @@ export class MidnightContractAdapter implements IContractGateway {
             throw new InvalidInputError('Message cannot be empty.');
         }
 
-        const targetAddress = contractAddress || this.deploymentStorage.getDeployment()?.contractAddress;
+        const targetAddress = contractAddress || (await this.deploymentStorage.getDeployment())?.contractAddress;
         if (!targetAddress) {
             throw new ContractNotFoundError();
         }
@@ -146,7 +146,7 @@ export class MidnightContractAdapter implements IContractGateway {
         const durationMs = Date.now() - startTime;
         const dustPaid = walletCtx.lastDustFee ? walletCtx.lastDustFee.toString() : '0';
 
-        this.deploymentStorage.saveDeployment({
+        await this.deploymentStorage.saveDeployment({
             contractAddress,
             deployerSeed: seed.trim(),
             deployedAt: new Date().toISOString(),
@@ -181,7 +181,7 @@ export class MidnightContractAdapter implements IContractGateway {
     }
 
     async getContractState(contractAddress?: string): Promise<ContractMessageSnapshot> {
-        const targetAddress = contractAddress || this.deploymentStorage.getDeployment()?.contractAddress;
+        const targetAddress = contractAddress || (await this.deploymentStorage.getDeployment())?.contractAddress;
         if (!targetAddress) {
             throw new ContractNotFoundError();
         }

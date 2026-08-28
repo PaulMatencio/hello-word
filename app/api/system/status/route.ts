@@ -13,7 +13,7 @@ export async function GET() {
             {
                 success: false,
                 error: error?.message || 'Failed to fetch system health',
-                deployment: container.deploymentStorage.getDeployment(),
+                deployment: await container.deploymentStorage.getDeployment(),
             },
             { status: 500 }
         );

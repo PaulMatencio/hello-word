@@ -163,16 +163,30 @@ npm run deploy
 │   │   ├── dto/                          # Use case input/output contracts
 │   │   └── use-cases/                    # StoreMessage, DeployContract, SendTNight, RegisterDust
 │   ├── infrastructure/                   # Midnight SDK adapters, drivers & composition root
-│   │   ├── config/                       # Preprod endpoints & network constants
+│   │   ├── config/                       # Preprod endpoints, network & storage config
+│   │   │   ├── midnight.config.ts        # RPC, Indexer, and Proof Server URLs
+│   │   │   └── storage.config.ts         # Active storage driver (file vs redis-json)
 │   │   ├── midnight/                     # Wallet & Contract Midnight SDK adapters
-│   │   ├── persistence/                  # Persistent file & deployment storage
+│   │   ├── persistence/                  # Dual persistence drivers (File & Redis Stack)
+│   │   │   ├── file-deployment.storage.ts
+│   │   │   ├── file-wallet-state.storage.ts
+│   │   │   ├── storage.factory.ts        # Storage service resolver factory
+│   │   │   └── redis/                    # Redis Stack (RedisJSON) adapters
+│   │   │       ├── redis-client.factory.ts
+│   │   │       ├── redis-deployment.storage.ts
+│   │   │       ├── redis-wallet-state.storage.ts
+│   │   │       └── redis-tx-history.storage.ts
 │   │   └── di/container.ts               # Dependency injection container & composition root
 │   ├── lib/
 │   │   ├── midnight-service.ts           # Backward-compatible service facade
-│   │   └── file-private-state-provider.ts # File-based private state persistence
+│   │   ├── file-private-state-provider.ts # File-based private state persistence
+│   │   └── file-transaction-history-storage.ts # File-based tx feed persistence
 │   ├── cli.ts                            # Terminal interactive CLI script
 │   ├── deploy.ts                         # Terminal contract deployment script
-│   └── seed.ts                           # Offline wallet seed & key derivation tool
+│   ├── seed.ts                           # Offline wallet seed & key derivation tool
+│   └── migrate-to-redis.ts               # Migration tool: File storage -> RedisJSON
+├── redis/
+│   └── docker-compose.yml                # Redis Stack (RedisJSON & RedisInsight) container
 ├── deployment.json                       # Active contract address & seed metadata
 ├── docker-compose.yml                    # Midnight Proof Server container configuration
 ├── troubleshooting-commands.md           # Comprehensive CLI diagnostics, API & GraphQL query guide
@@ -180,6 +194,67 @@ npm run deploy
 ├── package.json                          # Dependencies and scripts
 └── tsconfig.json                         # TypeScript configuration
 ```
+
+---
+
+## 🗄️ Persistence Infrastructure (`file` vs `redis-json`)
+
+The application supports dual persistence architectures, allowing seamless switching between local file storage and an enterprise Redis Stack (`redis-json`) database.
+
+### Storage Drivers Comparison
+
+| Feature | `file` (Default) | `redis-json` (Redis Stack) |
+| :--- | :--- | :--- |
+| **Backend** | Local `.json` files on disk | Native JSON documents in Redis Stack |
+| **Prerequisites** | None | Docker container (`npm run redis:start`) |
+| **Contract Deployment** | `deployment.json` | Key: `midnight:deployment` |
+| **Wallet Checkpoints** | `wallet-serialized-state.json` | Key: `midnight:wallet:state:<walletId>` |
+| **Transaction Feed** | `tx-history.json` | Key: `midnight:tx-history` |
+| **Visual Dashboard** | Code editor | RedisInsight Web UI (`http://localhost:8001`) |
+
+---
+
+### Configuration Options
+
+Settings are managed via [`src/infrastructure/config/storage.config.ts`](file:///home/paul/compact/hello-word/src/infrastructure/config/storage.config.ts) and can be overridden via environment variables or `.env.local`:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `STORAGE_DRIVER` | `file` | Active driver: `file` or `redis-json` |
+| `REDIS_URL` | `redis://127.0.0.1:6379` | Redis Stack connection URL |
+| `REDIS_PASSWORD` | *(empty)* | Optional Redis password |
+| `REDIS_KEY_PREFIX` | `midnight:` | Namespace prefix for Redis JSON keys |
+
+---
+
+### Using RedisJSON
+
+1. **Start Redis Stack & RedisInsight**:
+   ```bash
+   npm run redis:start
+   ```
+
+2. **Migrate existing local JSON files to Redis**:
+   ```bash
+   npm run migrate:redis
+   ```
+
+3. **Start the application with RedisJSON**:
+   ```bash
+   # Via environment variable
+   STORAGE_DRIVER=redis-json npm run dev
+
+   # Or add to .env.local:
+   # STORAGE_DRIVER=redis-json
+   ```
+
+4. **Inspect your live data visually**:
+   Open **RedisInsight UI** at [**http://localhost:8001**](http://localhost:8001) to explore and query your JSON documents in real-time.
+
+5. **Stop Redis Stack**:
+   ```bash
+   npm run redis:stop
+   ```
 
 ---
 
@@ -195,6 +270,9 @@ npm run deploy
 | `npm run compile` | Compiles `contracts/hello-world.compact` using Compact compiler |
 | `npm run proof-server:start` | Starts the Docker container for Midnight Proof Server |
 | `npm run proof-server:stop` | Stops the Proof Server container |
+| `npm run redis:start` | Starts the Redis Stack (JSON & RedisInsight) container |
+| `npm run redis:stop` | Stops the Redis Stack container |
+| `npm run migrate:redis` | Migrates all file-based deployments, wallet states, and tx history to RedisJSON |
 
 ---
 

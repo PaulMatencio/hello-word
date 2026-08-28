@@ -43,7 +43,7 @@ export class MidnightSystemAdapter implements ISystemGateway {
             indexerOk = false;
         }
 
-        const deployment = this.deploymentStorage.getDeployment();
+        const deployment = await this.deploymentStorage.getDeployment();
 
         return {
             proofServer: {

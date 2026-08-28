@@ -27,12 +27,12 @@ export async function createProviders(walletCtx: any) {
     return createProvidersInternal(walletCtx);
 }
 
-export function getDefaultDeployment() {
+export async function getDefaultDeployment() {
     return container.deploymentStorage.getDeployment();
 }
 
-export function saveDeployment(contractAddress: string, seed: string) {
-    container.deploymentStorage.saveDeployment({
+export async function saveDeployment(contractAddress: string, seed: string) {
+    await container.deploymentStorage.saveDeployment({
         contractAddress,
         deployerSeed: seed,
         deployedAt: new Date().toISOString(),

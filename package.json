@@ -16,7 +16,10 @@
     "cli": "tsx src/cli.ts",
     "seed": "tsx src/seed.ts",
     "proof-server:start": "docker compose up -d",
-    "proof-server:stop": "docker compose down"
+    "proof-server:stop": "docker compose down",
+    "redis:start": "docker compose -f redis/docker-compose.yml up -d",
+    "redis:stop": "docker compose -f redis/docker-compose.yml down",
+    "migrate:redis": "tsx src/migrate-to-redis.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -46,6 +49,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-server-dom-webpack": "^19.2.8",
+    "redis": "^6.2.1",
     "rxjs": "^7.8.2",
     "tailwindcss": "^3.4.17",
     "ws": "^8.21.1"

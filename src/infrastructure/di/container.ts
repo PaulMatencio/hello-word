@@ -3,9 +3,7 @@
  * Assembles domain gateways, adapters, and use cases into singletons for application consumption.
  */
 
-import { FileDeploymentStorage } from '../persistence/file-deployment.storage';
-import { FileTransactionHistoryStorage } from '@/src/lib/file-transaction-history-storage';
-import { FileWalletStateStorage } from '../persistence/file-wallet-state.storage';
+import { createStorageServices } from '../persistence/storage.factory';
 import { MidnightWalletAdapter } from '../midnight/midnight-wallet.adapter';
 import { MidnightContractAdapter } from '../midnight/midnight-contract.adapter';
 import { MidnightSystemAdapter } from '../midnight/midnight-system.adapter';
@@ -19,15 +17,18 @@ import { SendUnshieldedTNightUseCase } from '@/src/application/use-cases/send-un
 import { GetSystemHealthUseCase } from '@/src/application/use-cases/get-system-health.usecase';
 import { DeriveKeysUseCase } from '@/src/application/use-cases/derive-keys.usecase';
 
+const storage = createStorageServices();
+
 class Container {
     // Persistence
-    public readonly deploymentStorage = new FileDeploymentStorage();
-    public readonly txHistoryStorage = new FileTransactionHistoryStorage();
-    public readonly walletStateStorage = new FileWalletStateStorage();
+    public readonly deploymentStorage = storage.deploymentStorage;
+    public readonly txHistoryStorage = storage.txHistoryStorage;
+    public readonly walletStateStorage = storage.walletStateStorage;
+    public readonly activeStorageDriver = storage.activeDriver;
 
     // Adapters / Gateways
-    public readonly walletGateway = new MidnightWalletAdapter(this.txHistoryStorage, this.walletStateStorage);
-    public readonly contractGateway = new MidnightContractAdapter(this.walletGateway, this.deploymentStorage, this.txHistoryStorage);
+    public readonly walletGateway = new MidnightWalletAdapter(this.txHistoryStorage as any, this.walletStateStorage);
+    public readonly contractGateway = new MidnightContractAdapter(this.walletGateway, this.deploymentStorage, this.txHistoryStorage as any);
     public readonly systemGateway = new MidnightSystemAdapter(this.deploymentStorage);
 
     // Use Cases

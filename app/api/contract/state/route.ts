@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
             {
                 success: false,
                 error: error?.message || 'Failed to fetch contract state',
-                deployment: container.deploymentStorage.getDeployment(),
+                deployment: await container.deploymentStorage.getDeployment(),
             },
             { status: 500 }
         );
