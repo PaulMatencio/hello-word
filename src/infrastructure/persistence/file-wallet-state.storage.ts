@@ -1,6 +1,6 @@
 /**
  * Persistent File Wallet State Storage
- * Persists serialized Shielded and DUST wallet state to disk in wallet-serialized-state.json
+ * Persists serialized Shielded and DUST wallet state to disk atomically in wallet-serialized-state.json
  */
 
 import * as fs from 'node:fs';
@@ -9,6 +9,7 @@ import type { IWalletStateStorage, SerializedWalletState } from '@/src/domain/po
 
 export class FileWalletStateStorage implements IWalletStateStorage {
     private readonly filePath: string;
+    private writeLock: Promise<void> = Promise.resolve();
 
     constructor(filePath?: string) {
         this.filePath = filePath || path.resolve(process.cwd(), 'wallet-serialized-state.json');
@@ -22,8 +23,7 @@ export class FileWalletStateStorage implements IWalletStateStorage {
             const data = await fs.promises.readFile(this.filePath, 'utf-8');
             const parsed = JSON.parse(data);
             return typeof parsed === 'object' && parsed !== null ? parsed : {};
-        } catch (e) {
-            console.warn('Failed to read wallet-serialized-state.json:', e);
+        } catch {
             return {};
         }
     }
@@ -34,22 +34,32 @@ export class FileWalletStateStorage implements IWalletStateStorage {
     }
 
     async saveState(walletId: string, state: SerializedWalletState): Promise<void> {
-        try {
-            const all = await this.readAll();
-            all[walletId] = state;
-            await fs.promises.writeFile(this.filePath, JSON.stringify(all, null, 2), 'utf-8');
-        } catch (e) {
-            console.warn('Failed to save wallet serialized state:', e);
-        }
+        this.writeLock = this.writeLock.then(async () => {
+            try {
+                const all = await this.readAll();
+                all[walletId] = state;
+                const tempPath = `${this.filePath}.tmp.${Date.now()}`;
+                await fs.promises.writeFile(tempPath, JSON.stringify(all, null, 2), 'utf-8');
+                await fs.promises.rename(tempPath, this.filePath);
+            } catch (e) {
+                console.warn('Failed to atomically save wallet serialized state:', e);
+            }
+        });
+        return this.writeLock;
     }
 
     async clearState(walletId: string): Promise<void> {
-        try {
-            const all = await this.readAll();
-            delete all[walletId];
-            await fs.promises.writeFile(this.filePath, JSON.stringify(all, null, 2), 'utf-8');
-        } catch (e) {
-            console.warn('Failed to clear wallet serialized state:', e);
-        }
+        this.writeLock = this.writeLock.then(async () => {
+            try {
+                const all = await this.readAll();
+                delete all[walletId];
+                const tempPath = `${this.filePath}.tmp.${Date.now()}`;
+                await fs.promises.writeFile(tempPath, JSON.stringify(all, null, 2), 'utf-8');
+                await fs.promises.rename(tempPath, this.filePath);
+            } catch (e) {
+                console.warn('Failed to atomically clear wallet serialized state:', e);
+            }
+        });
+        return this.writeLock;
     }
 }

@@ -29,7 +29,6 @@ const nextConfig = {
     '@midnight-ntwrk/onchain-runtime-v3',
     '@midnight-ntwrk/zkir-v2',
     '@midnight-ntwrk/platform-js',
-    '@midnight-ntwrk/ledger-v7',
     '@midnight-ntwrk/ledger-v8',
     'ws',
     'level',
@@ -56,6 +55,7 @@ const nextConfig = {
     }
     return config;
   },
+  turbopack: {},
 };
 
 export default nextConfig;

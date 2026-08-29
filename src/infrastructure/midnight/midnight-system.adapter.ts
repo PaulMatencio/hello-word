@@ -11,36 +11,37 @@ export class MidnightSystemAdapter implements ISystemGateway {
         let indexerOk = false;
         let currentBlockHeight: number | null = null;
 
-        // Check Proof Server
-        try {
-            const proofRes = await fetch(MIDNIGHT_CONFIG.proofServer, {
+        // Run checks concurrently
+        const [proofResult, indexerResult] = await Promise.allSettled([
+            fetch(MIDNIGHT_CONFIG.proofServer, {
                 method: 'GET',
                 signal: AbortSignal.timeout(3000),
-            }).catch(() => null);
-            if (proofRes && (proofRes.status === 200 || proofRes.status === 404 || proofRes.status === 405)) {
-                proofServerOk = true;
-            }
-        } catch {
-            proofServerOk = false;
-        }
-
-        // Check Indexer GraphQL
-        try {
-            const indexerRes = await fetch(MIDNIGHT_CONFIG.indexer, {
+            }),
+            fetch(MIDNIGHT_CONFIG.indexer, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: '{ block(offset: { height: 1 }) { height } }' }),
-                signal: AbortSignal.timeout(5000),
-            });
-            if (indexerRes.ok) {
-                const data = await indexerRes.json();
-                if (data?.data?.block?.height) {
-                    indexerOk = true;
-                    currentBlockHeight = data.data.block.height;
-                }
+                body: JSON.stringify({ query: '{ block { height } }' }),
+                signal: AbortSignal.timeout(6000),
+            }),
+        ]);
+
+        if (proofResult.status === 'fulfilled' && proofResult.value) {
+            const status = proofResult.value.status;
+            if (status === 200 || status === 404 || status === 405) {
+                proofServerOk = true;
             }
-        } catch {
-            indexerOk = false;
+        }
+
+        if (indexerResult.status === 'fulfilled' && indexerResult.value?.ok) {
+            try {
+                const data = await indexerResult.value.json();
+                if (data?.data?.block?.height !== undefined) {
+                    indexerOk = true;
+                    currentBlockHeight = Number(data.data.block.height);
+                }
+            } catch {
+                indexerOk = false;
+            }
         }
 
         const deployment = await this.deploymentStorage.getDeployment();

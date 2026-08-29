@@ -49,6 +49,7 @@ export interface CachedWalletContext {
     seed: string;
     createdAt: number;
     lastDustFee?: bigint;
+    latestState?: any;
 }
 
 // Global in-memory cache to persist wallet synchronization stream across HTTP requests
@@ -175,6 +176,16 @@ export class MidnightWalletAdapter implements IWalletGateway {
             createdAt: Date.now(),
         };
 
+        // Continually track live latest state in memory for non-blocking instant status queries
+        wallet.state().subscribe({
+            next: (s: any) => {
+                ctx.latestState = s;
+            },
+            error: (err: any) => {
+                console.warn('Wallet state stream warning:', err);
+            },
+        });
+
         this.walletCache.set(trimmedSeed, ctx);
         return ctx;
     }
@@ -182,14 +193,17 @@ export class MidnightWalletAdapter implements IWalletGateway {
     async getWalletStatus(seed: string): Promise<WalletSnapshot> {
         const walletCtx = await this.getOrCreateWalletContext(seed);
 
-        const state: any = await Rx.firstValueFrom(
-            walletCtx.wallet.state().pipe(
-                Rx.timeout({
-                    each: 2000,
-                    with: () => walletCtx.wallet.state(),
-                }),
-            ),
-        ).catch(() => null);
+        let state: any = walletCtx.latestState;
+        if (!state) {
+            state = await Rx.firstValueFrom(
+                walletCtx.wallet.state().pipe(
+                    Rx.timeout({
+                        each: 1500,
+                        with: () => Rx.of(null),
+                    }),
+                ),
+            ).catch(() => null);
+        }
 
         const isSynced = state?.isSynced ?? false;
 
@@ -200,28 +214,41 @@ export class MidnightWalletAdapter implements IWalletGateway {
         const shieldedProgress = (state as any)?.shielded?.progress;
         const dustProgress = (state as any)?.dust?.progress;
 
-        const unshieldedApplied = unshieldedProgress?.appliedId ? BigInt(unshieldedProgress.appliedId.toString()) : 0n;
-        const unshieldedHighest = unshieldedProgress?.highestTransactionId ? BigInt(unshieldedProgress.highestTransactionId.toString()) : 0n;
+        const unshieldedApplied = BigInt((unshieldedProgress?.appliedIndex ?? unshieldedProgress?.appliedId ?? unshieldedProgress?.appliedTransactionId ?? 0).toString());
+        const unshieldedHighest = BigInt((unshieldedProgress?.highestRelevantIndex ?? unshieldedProgress?.highestIndex ?? unshieldedProgress?.highestTransactionId ?? 0).toString());
         const isUnshieldedStrictlyComplete = typeof unshieldedProgress?.isStrictlyComplete === 'function' ? unshieldedProgress.isStrictlyComplete() : false;
 
-        const shieldedApplied = (shieldedProgress?.appliedIndex ?? shieldedProgress?.appliedId) ? BigInt((shieldedProgress?.appliedIndex ?? shieldedProgress?.appliedId).toString()) : 0n;
-        const shieldedHighest = (shieldedProgress?.highestRelevantIndex ?? shieldedProgress?.highestIndex ?? shieldedProgress?.highestRelevantWalletIndex ?? shieldedProgress?.highestTransactionId) ? BigInt((shieldedProgress?.highestRelevantIndex ?? shieldedProgress?.highestIndex ?? shieldedProgress?.highestRelevantWalletIndex ?? shieldedProgress?.highestTransactionId).toString()) : 0n;
+        const shieldedApplied = BigInt((shieldedProgress?.appliedIndex ?? shieldedProgress?.appliedId ?? shieldedProgress?.appliedTransactionId ?? 0).toString());
+        const shieldedHighest = BigInt((shieldedProgress?.highestRelevantIndex ?? shieldedProgress?.highestIndex ?? shieldedProgress?.highestRelevantWalletIndex ?? shieldedProgress?.highestTransactionId ?? 0).toString());
         const isShieldedStrictlyComplete = typeof shieldedProgress?.isStrictlyComplete === 'function' ? shieldedProgress.isStrictlyComplete() : false;
 
-        const dustApplied = (dustProgress?.appliedIndex ?? dustProgress?.appliedId) ? BigInt((dustProgress?.appliedIndex ?? dustProgress?.appliedId).toString()) : 0n;
-        const dustHighest = (dustProgress?.highestRelevantIndex ?? dustProgress?.highestIndex ?? dustProgress?.highestRelevantWalletIndex ?? dustProgress?.highestTransactionId) ? BigInt((dustProgress?.highestRelevantIndex ?? dustProgress?.highestIndex ?? dustProgress?.highestRelevantWalletIndex ?? dustProgress?.highestTransactionId).toString()) : 0n;
+        const dustApplied = BigInt((dustProgress?.appliedIndex ?? dustProgress?.appliedId ?? dustProgress?.appliedTransactionId ?? 0).toString());
+        const dustHighest = BigInt((dustProgress?.highestRelevantIndex ?? dustProgress?.highestIndex ?? dustProgress?.highestRelevantWalletIndex ?? dustProgress?.highestTransactionId ?? 0).toString());
         const isDustStrictlyComplete = typeof dustProgress?.isStrictlyComplete === 'function' ? dustProgress.isStrictlyComplete() : false;
 
-        const isConnected = unshieldedProgress?.isConnected ?? false;
+        const isConnected = unshieldedProgress?.isConnected ?? shieldedProgress?.isConnected ?? dustProgress?.isConnected ?? true;
 
-        const pUnshielded = isUnshieldedStrictlyComplete ? 100 : (unshieldedHighest > 0n ? Math.min(100, Math.round((Number(unshieldedApplied) / Number(unshieldedHighest)) * 100)) : 0);
-        const pShielded = isShieldedStrictlyComplete ? 100 : (shieldedHighest > 0n ? Math.min(100, Math.round((Number(shieldedApplied) / Number(shieldedHighest)) * 100)) : 0);
-        const pDust = isDustStrictlyComplete ? 100 : (dustHighest > 0n ? Math.min(100, Math.round((Number(dustApplied) / Number(dustHighest)) * 100)) : 0);
+        const calcPercentage = (applied: bigint, highest: bigint, isStrictlyComplete: boolean): number => {
+            if (isStrictlyComplete) return 100;
+            if (highest <= 0n) {
+                return applied > 0n ? 100 : 0;
+            }
+            if (applied >= highest) return 100;
+            return Math.min(100, Math.max(0, Math.round((Number(applied) / Number(highest)) * 100)));
+        };
 
-        let overallPercentage = Math.floor((pUnshielded + pShielded + pDust) / 3);
-        if (isSynced || (isUnshieldedStrictlyComplete && isShieldedStrictlyComplete && isDustStrictlyComplete)) {
-            overallPercentage = 100;
-        } else if (overallPercentage >= 100 && !isSynced) {
+        const pUnshielded = calcPercentage(unshieldedApplied, unshieldedHighest, isUnshieldedStrictlyComplete);
+        const pShielded = calcPercentage(shieldedApplied, shieldedHighest, isShieldedStrictlyComplete);
+        const pDust = calcPercentage(dustApplied, dustHighest, isDustStrictlyComplete);
+
+        const isFullySynced = isSynced || (
+            (isUnshieldedStrictlyComplete || pUnshielded === 100) &&
+            (isShieldedStrictlyComplete || pShielded === 100) &&
+            (isDustStrictlyComplete || pDust === 100)
+        );
+
+        let overallPercentage = isFullySynced ? 100 : Math.floor((pUnshielded + pShielded + pDust) / 3);
+        if (overallPercentage >= 100 && !isFullySynced) {
             overallPercentage = 99;
         }
 
@@ -419,6 +446,7 @@ export class MidnightWalletAdapter implements IWalletGateway {
                     txHash,
                     blockHeight: null,
                     message: `Sent ${amount} tNIGHT to ${receiver.slice(0, 10)}...`,
+                    txType: 'token_transfer',
                     timestamp: receipt.timestamp,
                     dustPaid,
                     durationMs,

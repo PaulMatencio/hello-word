@@ -4,8 +4,20 @@ import type {
     ContractMessageSnapshot,
 } from '../entities/contract.entity';
 
+export interface DeployContractOptions {
+    contractType?: string;
+    privateStatePassword?: string;
+}
+
 export interface IContractGateway {
     storeMessage(seed: string, message: string, contractAddress?: string): Promise<TransactionExecutionReceipt>;
-    deployContract(seed: string): Promise<DeploymentExecutionReceipt>;
+    executeCircuit(
+        seed: string,
+        contractAddress: string,
+        circuitName: string,
+        args?: any[],
+        contractType?: string
+    ): Promise<TransactionExecutionReceipt>;
+    deployContract(seed: string, options?: DeployContractOptions): Promise<DeploymentExecutionReceipt>;
     getContractState(contractAddress?: string): Promise<ContractMessageSnapshot>;
 }

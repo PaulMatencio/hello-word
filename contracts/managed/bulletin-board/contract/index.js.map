@@ -1,0 +1,8 @@
+{
+  "version": 3,
+  "file": "index.js",
+  "sourceRoot": "../../src/",
+  "sources": ["bulletin-board.compact", "compiler/standard-library.compact"],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;EAwBA;;;;;;;;;;;;;MAUA,AAAA,IAKC;;;;;cALmB,YAA4B;;;;;;;;;;;yCAA5B,YAA4B;;;;;;;iEAA5B,YAA4B;;;OAK/C;MAGD,AAAA,QAQC;;;;;;;;;;;;;;;;;;;;;;OAAA;MAGD,AAAA,SAEC;;OAAA;;;;;;;;;;GA3BA;EAJD;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;IAZA;;;;;;;;;yEAA2B;IAG3B;;;;;;;;;yEAA+C;IAG/C;;;;;;;;;yEAAgC;IAGhC;;;;;;;;;yEAA+B;IAI7B;;;;;;;;;yEAAK;UACL,KAAO;IAAP;;;;;;;2HAAA,KAAO;;yEAAA;UACP,KAAQ;IAAR;;;;;;;;;;6FAAA,KAAQ;;;;wEAAA;;;;;;;GACT;ECLD,AAAA,QAAuB,0CACkB;EAGzC,AAAA;EA3BA,AAAA,kBAAA;oEAAA;;;ED+BA,AAAA,iBAAoC;;0DAApC,cAAoC;;;;;;;;;;;;;;GAAA;EAGpC,AAAA,OAKC,4BALmB,YAA4B;oDACvC;;;;;;;;;;;yHAAK;;;;UACZ,KAAK;;;iGAAwC;;;;;;;;;;;sKAAQ;;IAArD;;;;;;;2HAAA,KAAK;;yEAAA;UACL,KAAO,gBAAmC,YAAU;IAApD;;;;;;;2HAAA,KAAO;;yEAAA;IACP;;;;;;;;;yEAAK;;GACN;EAGD,AAAA,WAQC;oDAPQ;;;;;;;;;;;yHAAK;;;;kEACL;;;;;;;;;;;uIAAK;;;;yHAAgC;;;;;;;;;;;8LAAQ;;;UAC9C,WAAyB,2BAAb;;;;;;;;;;;qHAAO;IACzB;;;;;;;;;yEAAK;UACL,KAAQ;IAAR;;;;;;;;;;6FAAA,KAAQ;;;;wEAAA;UACR,KAAO;IAAP;;;;;;;2HAAA,KAAO;;yEAAA;WACA,WAAS;GACjB;EAGD,AAAA,YAEC,CAFwB,IAAa,EAAE,UAAmB;;mCACW,UAAQ;mCAAE,IAAE;GACjF;;;;;;;;;;;;;;;;;;;;IA3CD;qCAAA;;;;;;;;;;;0GAA2B;KAAA;IAG3B;qCAAA;;;;;;;;;;;0GAA+C;KAAA;IAG/C;qCAAA;;;;;;;;;;;0GAAgC;KAAA;IAGhC;qCAAA;;;;;;;;;;;0GAA+B;KAAA;;;;;;;;EAgC/B,AAAA,SAEC;;;;UAFwB,IAAa;UAAE,UAAmB;;;;;;;;;;;;;;;uCAAlC,IAAa,EAAE,UAAmB;GAE1D;;;;"
+}

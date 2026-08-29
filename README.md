@@ -6,6 +6,8 @@ A full-stack decentralized Zero-Knowledge application and interactive CLI built 
 
 ## 🌟 Features
 
+- **Compact Studio IDE & Test Runner**: In-browser Monaco editor for `.compact` smart contracts with custom Monarch syntax highlighting, error squiggles, starter templates, in-memory circuit unit test runner (`Ctrl+T`), and direct deployment handoff.
+- **Local Circuit Unit Test Suite**: Fast in-memory circuit testing (<100ms) with Vitest and built-in assertion & witness verification without network or DUST costs.
 - **Decentralized On-Chain Message Board**: Real-time inspection and live polling of public disclosed state from the Midnight Preprod indexer.
 - **Zero-Knowledge Message Publisher**: Proves, balances, signs, and broadcasts `storeMessage` circuit transactions with a step-by-step visual pipeline (*Sync -> ZK Proof -> Balance DUST -> Block Confirmation*).
 - **Wallet Studio & Send Hub**: Multi-role HD wallet management (`Roles.Zswap`, `Roles.NightExternal`, `Roles.Dust`), live tNIGHT & DUST balance tracking, one-click DUST generation registration, and an unshielded token transfer hub with a 4-step visual execution pipeline.
@@ -263,6 +265,8 @@ Settings are managed via [`src/infrastructure/config/storage.config.ts`](file://
 | Command | Description |
 | :--- | :--- |
 | `npm run dev` | Starts the Next.js development server on `http://localhost:3000` |
+| `npm test` | Runs local in-memory Zero-Knowledge circuit unit tests with Vitest |
+| `npm run test:watch` | Runs circuit unit tests in live-reload watch mode during development |
 | `npm run next:build` | Creates an optimized production build of the Next.js app |
 | `npm run start` | Runs the Next.js production server |
 | `npm run cli` | Runs the interactive Node.js terminal CLI |
@@ -273,6 +277,40 @@ Settings are managed via [`src/infrastructure/config/storage.config.ts`](file://
 | `npm run redis:start` | Starts the Redis Stack (JSON & RedisInsight) container |
 | `npm run redis:stop` | Stops the Redis Stack container |
 | `npm run migrate:redis` | Migrates all file-based deployments, wallet states, and tx history to RedisJSON |
+
+---
+
+## 🏛️ Smart Contract Registry & Lifecycle Management
+
+Understanding how smart contracts are stored, tracked, and managed across the Studio application and the Midnight blockchain:
+
+### What happens if a user deletes a contract in the registry?
+
+Deleting a contract depends entirely on **which layer** is being modified:
+
+#### 1. In the Local Studio Registry (`deployment.json` / Redis)
+- **UI Visibility**: The contract instance is removed from your active deployments list, recent activity tables, and quick contract switchers in the dashboard.
+- **Local Private State**: Your local encrypted private state (e.g. stored witness secrets, local transcript keys) for that instance will no longer be tracked by default.
+- **Recoverability**: **Yes.** You can re-import the contract anytime via **"Import Contract"** using its on-chain contract address and blueprint type.
+
+#### 2. On the Midnight Blockchain (Preprod / Mainnet)
+- 🔒 **Immutable On-Chain Existence**: Smart contracts deployed to the Midnight blockchain **cannot be deleted, altered, or destroyed**.
+- **State Preserved**: The on-chain public ledger state (e.g. posted bulletin board messages, sequence numbers, owner commitments) and historical block transactions remain permanently on the network.
+- **Still Interactive**: Anyone (including you, if re-imported) can continue querying its state via the Midnight indexer or submitting ZK transactions to its circuits.
+
+#### 3. In the Blueprint Registry (`contracts/managed/<name>`)
+- **Prover Keys Removed**: The ZK proving keys (`zkir`, `keys/`, and `contract/index.js`) are deleted from your disk.
+- **Interaction Blocked**: You will not be able to generate zero-knowledge proofs or invoke circuits for that contract type until you recompile the `.compact` file in the IDE or via `npm run compile`.
+
+### Summary Comparison Table
+
+| What is Deleted | Local Studio UI | Local ZK Prover | Midnight Blockchain | Recoverable? |
+| :--- | :---: | :---: | :---: | :---: |
+| **Deployment History Record** | ❌ Removed | 🟢 Intact | 🟢 **100% Intact & Active** | ✅ Re-import with Address |
+| **Compiled Blueprint (`managed/`)** | ❌ Removed | ❌ Deleted | 🟢 **100% Intact & Active** | ✅ Recompile `.compact` |
+| **On-Chain Contract** | N/A | N/A | 🔒 **Cannot be deleted** | N/A (Always on-chain) |
+
+---
 
 ---
 

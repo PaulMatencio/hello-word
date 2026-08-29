@@ -20,9 +20,73 @@ import {
 } from '@/src/domain/errors/domain-errors';
 import { MIDNIGHT_CONFIG } from '../config/midnight.config';
 import { createProviders } from './midnight-providers.factory';
-import * as HelloWorldContract from '@/contracts/managed/hello-world/contract/index.js';
+import * as LedgerV8 from '@midnight-ntwrk/ledger-v8';
+import * as OnchainRuntimeV3 from '@midnight-ntwrk/onchain-runtime-v3';
+import * as CompactRuntime from '@midnight-ntwrk/compact-runtime';
 
+// Guard global Reflect.get against wasm-bindgen non-object property lookups
+if (typeof globalThis.Reflect?.get === 'function') {
+    const originalReflectGet = globalThis.Reflect.get;
+    if (!(originalReflectGet as any).__isSafeWasmReflectGet) {
+        const safeReflectGet = function (target: any, propertyKey: PropertyKey, receiver?: any) {
+            if (target === undefined || target === null || (typeof target !== 'object' && typeof target !== 'function')) {
+                return undefined;
+            }
+            return originalReflectGet.apply(this, arguments as any);
+        };
+        (safeReflectGet as any).__isSafeWasmReflectGet = true;
+        globalThis.Reflect.get = safeReflectGet as any;
+    }
+}
+
+import * as crypto from 'node:crypto';
 import type { FileTransactionHistoryStorage } from '@/src/lib/file-transaction-history-storage';
+
+export function createWitnesses(contractType: string, walletCtx?: any): Record<string, any> {
+    const defaultWitnesses: Record<string, any> = {
+        localSecretKey: ({ privateState }: any) => {
+            let sk = privateState?.secretKey;
+            if (!sk || !(sk instanceof Uint8Array) || sk.length !== 32) {
+                if (walletCtx?.shieldedSecretKeys?.coinPublicKey) {
+                    sk = crypto.createHash('sha256').update(walletCtx.shieldedSecretKeys.coinPublicKey).digest();
+                } else {
+                    sk = crypto.randomBytes(32);
+                }
+            }
+            const nextPrivateState = {
+                ...(privateState || {}),
+                secretKey: sk,
+            };
+            return [nextPrivateState, sk instanceof Uint8Array ? sk : new Uint8Array(sk)];
+        },
+        secretKey: ({ privateState }: any) => {
+            let sk = privateState?.secretKey;
+            if (!sk || !(sk instanceof Uint8Array) || sk.length !== 32) {
+                sk = crypto.randomBytes(32);
+            }
+            const nextPrivateState = {
+                ...(privateState || {}),
+                secretKey: sk,
+            };
+            return [nextPrivateState, sk instanceof Uint8Array ? sk : new Uint8Array(sk)];
+        },
+    };
+
+    return new Proxy(defaultWitnesses, {
+        get(target, prop: string) {
+            if (prop in target) {
+                return target[prop];
+            }
+            return ({ privateState }: any) => {
+                const ps = privateState || {};
+                return [ps, crypto.randomBytes(32)];
+            };
+        },
+        has() {
+            return true;
+        },
+    });
+}
 
 export class MidnightContractAdapter implements IContractGateway {
     private compiledContractCache: any = null;
@@ -33,20 +97,44 @@ export class MidnightContractAdapter implements IContractGateway {
         private readonly txHistoryStorage?: FileTransactionHistoryStorage,
     ) {}
 
-    async getContractArtifacts() {
-        if (this.compiledContractCache) {
-            return this.compiledContractCache;
+    async getContractArtifacts(contractType: string = 'hello-world', walletCtx?: any) {
+        const zkConfigPath = path.resolve(process.cwd(), 'contracts', 'managed', contractType);
+        const contractJsPath = path.join(zkConfigPath, 'contract', 'index.js');
+        
+        if (!fs.existsSync(contractJsPath)) {
+            throw new Error(`Compiled contract artifacts not found at contracts/managed/${contractType}. Please compile the contract first in the IDE.`);
         }
 
-        const HelloWorld = (HelloWorldContract as any).Contract || (HelloWorldContract as any).default?.Contract || HelloWorldContract;
-        const zkConfigPath = path.resolve(process.cwd(), 'contracts', 'managed', 'hello-world');
-        const compiledContract = CompiledContract.make('hello-world', HelloWorld).pipe(
-            CompiledContract.withVacantWitnesses,
-            CompiledContract.withCompiledFileAssets(zkConfigPath),
-        );
+        const contractUrl = pathToFileURL(contractJsPath).href;
+        let contractModule: any;
+        try {
+            // Use runtime Function constructor to avoid Webpack/Turbopack static analysis and module mangling
+            const dynamicImport = new Function('specifier', 'return import(specifier)');
+            contractModule = await dynamicImport(contractUrl);
+        } catch (importErr: any) {
+            console.error(`Failed to dynamically load contract module for ${contractType}:`, importErr);
+            throw new Error(`Failed to load contract runtime for ${contractType}: ${importErr.message}`);
+        }
 
-        this.compiledContractCache = { HelloWorld, compiledContract };
-        return this.compiledContractCache;
+        const ContractClass = (contractModule as any).Contract || (contractModule as any).default?.Contract || contractModule;
+
+        let compiledContract: any;
+        if (contractType === 'hello-world') {
+            compiledContract = CompiledContract.make(contractType, ContractClass).pipe(
+                CompiledContract.withVacantWitnesses,
+                CompiledContract.withCompiledFileAssets(zkConfigPath),
+            );
+        } else {
+            const witnesses = createWitnesses(contractType, walletCtx);
+            const withWitnessesFn = CompiledContract.withWitnesses as any;
+            const withFileAssetsFn = CompiledContract.withCompiledFileAssets as any;
+            compiledContract = (CompiledContract.make(contractType, ContractClass) as any).pipe(
+                withWitnessesFn(witnesses),
+                withFileAssetsFn(zkConfigPath),
+            );
+        }
+
+        return { ContractClass, HelloWorld: ContractClass, compiledContract, zkConfigPath };
     }
 
     async storeMessage(seed: string, message: string, contractAddress?: string): Promise<TransactionExecutionReceipt> {
@@ -54,6 +142,21 @@ export class MidnightContractAdapter implements IContractGateway {
             throw new InvalidInputError('Message cannot be empty.');
         }
 
+        const targetAddress = contractAddress || (await this.deploymentStorage.getDeployment())?.contractAddress;
+        if (!targetAddress) {
+            throw new ContractNotFoundError();
+        }
+
+        return this.executeCircuit(seed, targetAddress, 'storeMessage', [message.trim()], 'hello-world');
+    }
+
+    async executeCircuit(
+        seed: string,
+        contractAddress: string,
+        circuitName: string,
+        args: any[] = [],
+        contractType: string = 'hello-world'
+    ): Promise<TransactionExecutionReceipt> {
         const targetAddress = contractAddress || (await this.deploymentStorage.getDeployment())?.contractAddress;
         if (!targetAddress) {
             throw new ContractNotFoundError();
@@ -69,27 +172,36 @@ export class MidnightContractAdapter implements IContractGateway {
             throw new InsufficientDustError();
         }
 
-        const { compiledContract } = await this.getContractArtifacts();
         const walletCtx = await this.walletGateway.getOrCreateWalletContext(seed);
         await walletCtx.wallet.waitForSyncedState();
 
-        const providers = createProviders(walletCtx);
+        const { compiledContract, zkConfigPath } = await this.getContractArtifacts(contractType, walletCtx);
+        const providers = createProviders(walletCtx, { zkConfigPath });
 
         const contract = await findDeployedContract(providers as any, {
             contractAddress: targetAddress,
             compiledContract: compiledContract as any,
-            privateStateId: 'helloWorldState',
+            privateStateId: `${contractType}State`,
             initialPrivateState: {},
         });
 
+        const circuitFn = (contract as any).callTx[circuitName];
+        if (typeof circuitFn !== 'function') {
+            throw new Error(`Circuit '${circuitName}' was not found on contract '${contractType}'.`);
+        }
+
         const startTime = Date.now();
-        const tx = await (contract as any).callTx.storeMessage(message.trim());
+        const tx = await circuitFn(...args);
         const durationMs = Date.now() - startTime;
         const dustPaid = walletCtx.lastDustFee ? walletCtx.lastDustFee.toString() : '0';
 
+        const displayMessage = args.length > 0 && typeof args[0] === 'string'
+            ? args[0]
+            : `${circuitName}() executed`;
+
         const receipt: TransactionExecutionReceipt = {
             success: true,
-            message: message.trim(),
+            message: displayMessage,
             contractAddress: targetAddress,
             txHash: tx.public.txHash,
             blockHeight: tx.public.blockHeight,
@@ -104,7 +216,11 @@ export class MidnightContractAdapter implements IContractGateway {
                     id: `tx-${Date.now()}`,
                     txHash: tx.public.txHash,
                     blockHeight: tx.public.blockHeight,
-                    message: message.trim(),
+                    message: displayMessage,
+                    contractAddress: targetAddress,
+                    contractType,
+                    circuitName,
+                    txType: 'contract_call',
                     timestamp: receipt.timestamp,
                     dustPaid,
                     durationMs,
@@ -117,7 +233,14 @@ export class MidnightContractAdapter implements IContractGateway {
         return receipt;
     }
 
-    async deployContract(seed: string): Promise<DeploymentExecutionReceipt> {
+    async deployContract(seed: string, options?: { contractType?: string; privateStatePassword?: string }): Promise<DeploymentExecutionReceipt> {
+        const contractType = options?.contractType || 'hello-world';
+        const password = options?.privateStatePassword?.trim() || MIDNIGHT_CONFIG.privateStatePassword;
+
+        if (!password || password.length < 16) {
+            throw new InvalidInputError('Private state password is required and must be at least 16 characters long.');
+        }
+
         const status = await this.walletGateway.getWalletStatus(seed);
         if (!status.isSynced) {
             throw new WalletNotSyncedError(status.syncProgress?.percentage);
@@ -128,17 +251,21 @@ export class MidnightContractAdapter implements IContractGateway {
             throw new InsufficientDustError();
         }
 
-        const { compiledContract } = await this.getContractArtifacts();
         const walletCtx = await this.walletGateway.getOrCreateWalletContext(seed);
         await walletCtx.wallet.waitForSyncedState();
 
-        const providers = createProviders(walletCtx);
+        const { compiledContract, zkConfigPath } = await this.getContractArtifacts(contractType, walletCtx);
+
+        const providers = createProviders(walletCtx, {
+            privateStatePassword: password,
+            zkConfigPath,
+        });
 
         const startTime = Date.now();
         const deployed = await deployContract(providers as any, {
             compiledContract: compiledContract as any,
             args: [],
-            privateStateId: 'helloWorldState',
+            privateStateId: `${contractType}State`,
             initialPrivateState: {},
         });
 
@@ -148,6 +275,7 @@ export class MidnightContractAdapter implements IContractGateway {
 
         await this.deploymentStorage.saveDeployment({
             contractAddress,
+            contractType,
             deployerSeed: seed.trim(),
             deployedAt: new Date().toISOString(),
         });
@@ -155,6 +283,7 @@ export class MidnightContractAdapter implements IContractGateway {
         const receipt: DeploymentExecutionReceipt = {
             success: true,
             contractAddress,
+            contractType,
             dustPaid,
             durationMs,
             network: MIDNIGHT_CONFIG.networkId,
@@ -166,6 +295,9 @@ export class MidnightContractAdapter implements IContractGateway {
                 await this.txHistoryStorage.storeTxRecord({
                     id: `deploy-${Date.now()}`,
                     txHash: contractAddress,
+                    contractAddress: contractAddress,
+                    contractType,
+                    txType: 'contract_deploy',
                     blockHeight: null,
                     message: `Contract Deployed: ${contractAddress.slice(0, 10)}...`,
                     timestamp: receipt.deployedAt,
@@ -181,12 +313,14 @@ export class MidnightContractAdapter implements IContractGateway {
     }
 
     async getContractState(contractAddress?: string): Promise<ContractMessageSnapshot> {
-        const targetAddress = contractAddress || (await this.deploymentStorage.getDeployment())?.contractAddress;
+        const deployment = await this.deploymentStorage.getDeployment(contractAddress);
+        const targetAddress = contractAddress || deployment?.contractAddress;
         if (!targetAddress) {
             throw new ContractNotFoundError();
         }
 
-        const { HelloWorld } = await this.getContractArtifacts();
+        const contractType = (deployment as any)?.contractType || 'hello-world';
+        const artifacts = await this.getContractArtifacts(contractType);
         const publicDataProvider = indexerPublicDataProvider(MIDNIGHT_CONFIG.indexer, MIDNIGHT_CONFIG.indexerWS);
         const state = await publicDataProvider.queryContractState(targetAddress);
 
@@ -200,12 +334,18 @@ export class MidnightContractAdapter implements IContractGateway {
             };
         }
 
-        const ledgerFn = (HelloWorldContract as any).ledger || (HelloWorldContract as any).default?.ledger || (HelloWorld as any).ledger;
+        const ledgerFn = (artifacts as any).contractModule?.ledger || (artifacts as any).contractModule?.default?.ledger;
         let message = '';
         if (ledgerFn) {
             try {
                 const ledgerState = ledgerFn(state.data);
-                message = ledgerState?.message || '';
+                if (typeof ledgerState?.message === 'string') {
+                    message = ledgerState.message;
+                } else if (ledgerState?.message?.value) {
+                    message = String(ledgerState.message.value);
+                } else if (typeof ledgerState === 'object') {
+                    message = JSON.stringify(ledgerState);
+                }
             } catch (e) {
                 console.warn('Error extracting ledger message:', e);
             }

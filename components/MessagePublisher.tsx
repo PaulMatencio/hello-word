@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Send, ShieldAlert, CheckCircle2, Loader2, Sparkles, ArrowRight, Clock, Box, Flame, Zap } from 'lucide-react';
+import { useToast } from '@/src/presentation/context/ToastContext';
 
 interface MessagePublisherProps {
   seed: string;
@@ -29,23 +30,30 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
   const [statusText, setStatusText] = useState('');
   const [txResult, setTxResult] = useState<any>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const toast = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!message.trim()) return;
     if (!seed.trim()) {
-      setErrorMsg('Please connect your wallet seed first in the Wallet Studio below.');
+      const err = 'Please connect your wallet seed first in the Wallet Studio below.';
+      setErrorMsg(err);
       setStage('error');
+      toast.error('Wallet Error', err);
       return;
     }
     if (!isSynced) {
-      setErrorMsg(`Wallet is not synchronized (${syncPercentage}%). Blockchain interactions are blocked until synchronization is 100% complete.`);
+      const err = `Wallet is not synchronized (${syncPercentage}%). Blockchain interactions are blocked until synchronization is 100% complete.`;
+      setErrorMsg(err);
       setStage('error');
+      toast.error('Sync Required', err);
       return;
     }
     if (dustBalance === '0' || !dustBalance) {
-      setErrorMsg('Zero DUST gas balance. Transaction fee balancing requires DUST. Please click "Register for DUST" in the Wallet Studio below and allow time for DUST to accrue.');
+      const err = 'Zero DUST gas balance. Transaction fee balancing requires DUST.';
+      setErrorMsg(err);
       setStage('error');
+      toast.error('Insufficient Gas', err);
       return;
     }
 
@@ -58,17 +66,17 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
     const timer1 = setTimeout(() => {
       setStage('proving');
       setStatusText('Generating Zero-Knowledge SNARK proof via Proof Server (127.0.0.1:6300)...');
-    }, 1500);
+    }, 1200);
 
     const timer2 = setTimeout(() => {
       setStage('balancing');
-      setStatusText('Balancing transaction fee using DUST tokens...');
-    }, 12000);
+      setStatusText('Balancing transaction with DUST and private Shielded coins...');
+    }, 4500);
 
     const timer3 = setTimeout(() => {
       setStage('submitting');
-      setStatusText('Signing and broadcasting transaction to Midnight Preprod ledger...');
-    }, 18000);
+      setStatusText('Broadcasting transaction to Midnight Preprod node...');
+    }, 7500);
 
     try {
       const res = await fetch('/api/contract/message', {
@@ -93,6 +101,7 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
       setStage('confirmed');
       setStatusText('Transaction confirmed in block!');
       setTxResult(data.data);
+      toast.success('Message Published!', 'ZK proof verified and message committed to Midnight Preprod', data.data.txHash);
       onSuccess(data.data);
       setMessage('');
     } catch (err: any) {
@@ -100,7 +109,9 @@ export const MessagePublisher: React.FC<MessagePublisherProps> = ({
       clearTimeout(timer2);
       clearTimeout(timer3);
       setStage('error');
-      setErrorMsg(err.message || 'An unexpected error occurred.');
+      const msg = err.message || 'An unexpected error occurred.';
+      setErrorMsg(msg);
+      toast.error('Transaction Failed', msg);
       if (onError) {
         onError(err);
       }

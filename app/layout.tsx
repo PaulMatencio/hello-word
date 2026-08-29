@@ -6,6 +6,8 @@ export const metadata: Metadata = {
   description: 'Decentralized Zero-Knowledge application interacting with the Midnight Preprod blockchain and Hello World Compact smart contract.',
 };
 
+import { GlobalShell } from '@/components/GlobalShell';
+
 export default function RootLayout({
   children,
 }: {
@@ -14,7 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="bg-mesh min-h-screen text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
-        {children}
+        <GlobalShell>{children}</GlobalShell>
       </body>
     </html>
   );

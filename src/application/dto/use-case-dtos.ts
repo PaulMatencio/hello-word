@@ -21,6 +21,8 @@ export interface StoreMessageOutput extends TransactionExecutionReceipt {}
 
 export interface DeployContractInput {
     seed: string;
+    contractType?: string;
+    privateStatePassword?: string;
 }
 
 export interface DeployContractOutput extends DeploymentExecutionReceipt {}

@@ -5,6 +5,9 @@ export class DeployContractUseCase {
     constructor(private readonly contractGateway: IContractGateway) {}
 
     async execute(input: DeployContractInput): Promise<DeployContractOutput> {
-        return this.contractGateway.deployContract(input.seed);
+        return this.contractGateway.deployContract(input.seed, {
+            contractType: input.contractType,
+            privateStatePassword: input.privateStatePassword,
+        });
     }
 }

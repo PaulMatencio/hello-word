@@ -50,6 +50,9 @@ const CONFIG = {
 
 // The SDK requires the private-state password to be at least 16 characters.
 const PRIVATE_STATE_PASSWORD = process.env.PRIVATE_STATE_PASSWORD?.trim() || 'Hello-World-Lesson-Password-1';
+if (PRIVATE_STATE_PASSWORD.length < 16) {
+    throw new Error('PRIVATE_STATE_PASSWORD must be at least 16 characters long.');
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'hello-world');

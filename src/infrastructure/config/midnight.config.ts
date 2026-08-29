@@ -9,5 +9,5 @@ export const MIDNIGHT_CONFIG = {
     proofServer: 'http://127.0.0.1:6300',
     networkId: 'preprod' as const,
     faucet: 'https://faucet.preprod.midnight.network',
-    privateStatePassword: 'hello-world-private-state-pwd',
+    privateStatePassword: process.env.PRIVATE_STATE_PASSWORD?.trim() || '',
 };

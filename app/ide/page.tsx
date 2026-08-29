@@ -1,0 +1,1405 @@
+'use client';
+
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import {
+    Play,
+    Sparkles,
+    FileCode2,
+    CheckCircle2,
+    AlertCircle,
+    Copy,
+    Check,
+    Download,
+    RefreshCw,
+    Terminal,
+    Shield,
+    Zap,
+    Rocket,
+    Code2,
+    FilePlus,
+    Flame,
+    Cpu,
+    Maximize2,
+    Minimize2,
+    Folder,
+    FolderOpen,
+    HardDrive,
+    Save,
+    Upload,
+    X,
+    FlaskConical,
+} from 'lucide-react';
+import type { OnMount } from '@monaco-editor/react';
+import { Breadcrumbs } from '@/components/Breadcrumbs';
+import { useToast } from '@/src/presentation/context/ToastContext';
+import {
+    COMPACT_LANGUAGE_ID,
+    compactLanguageDefinition,
+    compactLanguageConfiguration,
+    compactTheme,
+} from '@/src/infrastructure/ide/compact-monarch';
+import { COMPACT_TEMPLATES, CompactTemplate } from '@/src/infrastructure/ide/compact-templates';
+
+// Dynamically import Monaco to prevent SSR issues
+const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
+
+type OutputTab = 'console' | 'dts' | 'circuits' | 'js' | 'tests';
+
+interface WorkspaceFile {
+    name: string;
+    relativePath: string;
+    sizeBytes: number;
+    updatedAt: string;
+}
+
+export default function CompactIdePage() {
+    const toast = useToast();
+    const editorRef = useRef<any>(null);
+    const monacoRef = useRef<any>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Editor state
+    const [selectedTemplate, setSelectedTemplate] = useState<CompactTemplate>(COMPACT_TEMPLATES[0]);
+    const [filename, setFilename] = useState<string>(COMPACT_TEMPLATES[0].filename);
+    const [sourceCode, setSourceCode] = useState<string>(COMPACT_TEMPLATES[0].code);
+    const [isDirty, setIsDirty] = useState<boolean>(false);
+    const [skipZk, setSkipZk] = useState<boolean>(false);
+    const [persistToManaged, setPersistToManaged] = useState<boolean>(true);
+    const [isCompiling, setIsCompiling] = useState<boolean>(false);
+    const [isSaving, setIsSaving] = useState<boolean>(false);
+
+    // Workspace files loading state
+    const [isOpenModalOpen, setIsOpenModalOpen] = useState<boolean>(false);
+    const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
+    const [isLoadingFiles, setIsLoadingFiles] = useState<boolean>(false);
+
+    // Compilation result state
+    const [compilationResult, setCompilationResult] = useState<any>(null);
+    const [activeTab, setActiveTab] = useState<OutputTab>('circuits');
+    const [copiedDts, setCopiedDts] = useState<boolean>(false);
+
+    // Test runner state
+    const [isRunningTests, setIsRunningTests] = useState<boolean>(false);
+    const [testResult, setTestResult] = useState<any>(null);
+
+    // Export / Save As Modal State
+    const [isSaveAsModalOpen, setIsSaveAsModalOpen] = useState<boolean>(false);
+    const [saveAsFilename, setSaveAsFilename] = useState<string>(COMPACT_TEMPLATES[0].filename);
+    const [saveAsFolder, setSaveAsFolder] = useState<string>('contracts');
+    const [isSavingWorkspace, setIsSavingWorkspace] = useState<boolean>(false);
+
+    // Keep refs for Monaco keyboard command bindings
+    const handleQuickSaveRef = useRef<() => void>(() => {});
+    const handleRunTestsRef = useRef<() => void>(() => {});
+
+    // Quick Save (to contracts/<filename>)
+    const handleQuickSave = async () => {
+        if (!sourceCode.trim()) {
+            toast.error('Save Error', 'Source code cannot be empty.');
+            return;
+        }
+
+        const safeFilename = filename.trim().endsWith('.compact')
+            ? filename.trim()
+            : `${filename.trim()}.compact`;
+
+        setIsSaving(true);
+        try {
+            const res = await fetch('/api/compiler/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceCode,
+                    filename: safeFilename,
+                    folder: 'contracts',
+                }),
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Failed to save contract');
+            }
+
+            setIsDirty(false);
+            toast.success('Contract Saved', `Saved to ${data.data.folder}/${data.data.filename}`);
+        } catch (err: any) {
+            console.error('Quick save failed:', err);
+            toast.error('Save Failed', err.message || 'Could not save contract to workspace');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    // Setup Monaco syntax highlighting on editor mount & register keybindings
+    const handleEditorDidMount: OnMount = (editor, monaco) => {
+        editorRef.current = editor;
+        monacoRef.current = monaco;
+
+        // Register Compact Language & Grammar
+        if (!monaco.languages.getLanguages().some((lang: any) => lang.id === COMPACT_LANGUAGE_ID)) {
+            monaco.languages.register({ id: COMPACT_LANGUAGE_ID });
+            monaco.languages.setMonarchTokensProvider(COMPACT_LANGUAGE_ID, compactLanguageDefinition);
+            monaco.languages.setLanguageConfiguration(COMPACT_LANGUAGE_ID, compactLanguageConfiguration);
+            monaco.editor.defineTheme('compact-midnight-dark', compactTheme);
+        }
+        monaco.editor.setTheme('compact-midnight-dark');
+
+        // Bind Ctrl+S / Cmd+S to Quick Save
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+            handleQuickSaveRef.current?.();
+        });
+
+        // Bind Ctrl+T / Cmd+T to Run Tests
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyT, () => {
+            handleRunTestsRef.current?.();
+        });
+    };
+
+    // Update markers (squiggles) in Monaco on error diagnostics
+    const updateEditorMarkers = useCallback((diagnostics: any[]) => {
+        if (!monacoRef.current || !editorRef.current) return;
+        const monaco = monacoRef.current;
+        const model = editorRef.current.getModel();
+        if (!model) return;
+
+        const markers = diagnostics.map((d) => ({
+            startLineNumber: d.line || 1,
+            startColumn: d.column || 1,
+            endLineNumber: d.line || 1,
+            endColumn: (d.column || 1) + 10,
+            message: d.message,
+            severity: monaco.MarkerSeverity.Error,
+        }));
+
+        monaco.editor.setModelMarkers(model, 'compact-compiler', markers);
+    }, []);
+
+    // Template switcher
+    const handleSelectTemplate = (tmpl: CompactTemplate) => {
+        setSelectedTemplate(tmpl);
+        setFilename(tmpl.filename);
+        setSaveAsFilename(tmpl.filename);
+        setSourceCode(tmpl.code);
+        setIsDirty(false);
+        setCompilationResult(null);
+        if (monacoRef.current && editorRef.current) {
+            const model = editorRef.current.getModel();
+            if (model) {
+                monacoRef.current.editor.setModelMarkers(model, 'compact-compiler', []);
+            }
+        }
+        toast.info('Template Loaded', tmpl.title);
+    };
+
+    // Fetch workspace files from contracts directory
+    const fetchWorkspaceFiles = async () => {
+        setIsLoadingFiles(true);
+        try {
+            const res = await fetch('/api/compiler/files');
+            const data = await res.json();
+            if (data.success) {
+                setWorkspaceFiles(data.data || []);
+            }
+        } catch (err) {
+            console.warn('Failed to fetch workspace files:', err);
+        } finally {
+            setIsLoadingFiles(false);
+        }
+    };
+
+    const openLoadModal = () => {
+        fetchWorkspaceFiles();
+        setIsOpenModalOpen(true);
+    };
+
+    // Load file from workspace
+    const handleLoadWorkspaceFile = async (relativePath: string) => {
+        try {
+            const res = await fetch(`/api/compiler/files?file=${encodeURIComponent(relativePath)}`);
+            const data = await res.json();
+            if (data.success && data.data?.content !== undefined) {
+                setFilename(data.data.filename);
+                setSaveAsFilename(data.data.filename);
+                setSourceCode(data.data.content);
+                setIsDirty(false);
+                setCompilationResult(null);
+                setIsOpenModalOpen(false);
+                toast.success('Contract Loaded', `Loaded contracts/${relativePath}`);
+            } else {
+                throw new Error(data.error || 'Failed to read contract content');
+            }
+        } catch (err: any) {
+            toast.error('Load Failed', err.message || 'Could not load contract file');
+        }
+    };
+
+    // Open from local disk (Native File Picker or input fallback)
+    const handleNativeFileOpen = async () => {
+        if ('showOpenFilePicker' in window) {
+            try {
+                const [fileHandle] = await (window as any).showOpenFilePicker({
+                    types: [
+                        {
+                            description: 'Compact Smart Contract (*.compact)',
+                            accept: {
+                                'text/plain': ['.compact', '.txt'],
+                            },
+                        },
+                    ],
+                    multiple: false,
+                });
+                const file = await fileHandle.getFile();
+                const content = await file.text();
+                setFilename(file.name);
+                setSaveAsFilename(file.name);
+                setSourceCode(content);
+                setIsDirty(false);
+                setCompilationResult(null);
+                setIsOpenModalOpen(false);
+                toast.success('File Loaded', `Loaded ${file.name}`);
+                return;
+            } catch (err: any) {
+                if (err.name === 'AbortError') return;
+                console.warn('showOpenFilePicker error, using input fallback:', err);
+            }
+        }
+
+        // Fallback to hidden file input
+        fileInputRef.current?.click();
+    };
+
+    // File input fallback change handler
+    const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const content = event.target?.result as string;
+            setFilename(file.name);
+            setSaveAsFilename(file.name);
+            setSourceCode(content || '');
+            setIsDirty(false);
+            setCompilationResult(null);
+            setIsOpenModalOpen(false);
+            toast.success('File Loaded', `Loaded ${file.name}`);
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+    };
+
+    // Trigger Compilation
+    const handleCompile = async () => {
+        if (!sourceCode.trim()) {
+            toast.error('Compiler Error', 'Source code cannot be empty.');
+            return;
+        }
+
+        setIsCompiling(true);
+        try {
+            const res = await fetch('/api/compiler/compile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceCode,
+                    filename,
+                    skipZk,
+                    persistToManaged,
+                }),
+            });
+
+            const data = await res.json();
+            setCompilationResult(data);
+
+            if (data.success) {
+                updateEditorMarkers([]);
+                const msg = data.managedPath
+                    ? `Compiled in ${data.durationMs}ms & saved to ./${data.managedPath}`
+                    : `Compiled in ${data.durationMs}ms with ${data.circuits?.length || 0} circuit(s)`;
+                toast.success('Compilation Succeeded!', msg);
+                if (activeTab === 'console') {
+                    setActiveTab('circuits');
+                }
+            } else {
+                updateEditorMarkers(data.diagnostics || []);
+                toast.error('Compilation Failed', `${data.diagnostics?.length || 1} error(s) found`);
+                setActiveTab('console');
+            }
+        } catch (err: any) {
+            console.error('Compilation request failed:', err);
+            toast.error('Compiler Error', err.message || 'Failed to reach compiler endpoint');
+        } finally {
+            setIsCompiling(false);
+        }
+    };
+
+    // Run Circuit Unit Tests
+    const handleRunTests = async () => {
+        setIsRunningTests(true);
+        setActiveTab('tests');
+        try {
+            const cleanContractName = filename.replace(/\.compact$/, '');
+            const res = await fetch('/api/compiler/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contractType: cleanContractName,
+                    filename,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Failed to run circuit tests');
+            }
+            setTestResult(data.data);
+            if (data.data.failedTests === 0) {
+                toast.success(
+                    'Circuit Tests Passed!',
+                    `All ${data.data.totalTests} test(s) passed in ${data.data.totalDurationMs}ms.`
+                );
+            } else {
+                toast.error(
+                    'Tests Failed',
+                    `${data.data.failedTests} of ${data.data.totalTests} test(s) failed.`
+                );
+            }
+        } catch (err: any) {
+            toast.error('Test Execution Failed', err.message || 'Unknown error');
+            setTestResult({
+                error: err.message,
+                failedTests: 1,
+                totalTests: 1,
+                passedTests: 0,
+                totalDurationMs: 0,
+                suites: [],
+            });
+        } finally {
+            setIsRunningTests(false);
+        }
+    };
+
+    // Keep refs in sync for Monaco editor keybindings
+    useEffect(() => {
+        handleQuickSaveRef.current = handleQuickSave;
+        handleRunTestsRef.current = handleRunTests;
+    });
+
+    // Format code (basic indentation)
+    const handleFormat = () => {
+        if (editorRef.current) {
+            editorRef.current.getAction('editor.action.formatDocument')?.run();
+            toast.info('Formatted', 'Code formatted');
+        }
+    };
+
+    // Jump to line from diagnostic
+    const handleJumpToLine = (line: number, col: number) => {
+        if (editorRef.current) {
+            editorRef.current.revealPositionInCenter({ lineNumber: line, column: col });
+            editorRef.current.setPosition({ lineNumber: line, column: col });
+            editorRef.current.focus();
+        }
+    };
+
+    const copyDts = () => {
+        if (compilationResult?.files?.dts) {
+            navigator.clipboard.writeText(compilationResult.files.dts);
+            setCopiedDts(true);
+            toast.info('Copied', 'TypeScript declaration copied to clipboard');
+            setTimeout(() => setCopiedDts(false), 2000);
+        }
+    };
+
+    const openSaveAsModal = () => {
+        const safeName = filename.endsWith('.compact') ? filename : `${filename}.compact`;
+        setSaveAsFilename(safeName);
+        setIsSaveAsModalOpen(true);
+    };
+
+    // Save As: Native System File & Folder Picker
+    const handleNativeFilePickerSaveAs = async () => {
+        const safeFilename = saveAsFilename.trim().endsWith('.compact')
+            ? saveAsFilename.trim()
+            : `${saveAsFilename.trim()}.compact`;
+
+        if ('showSaveFilePicker' in window) {
+            try {
+                const handle = await (window as any).showSaveFilePicker({
+                    suggestedName: safeFilename,
+                    types: [
+                        {
+                            description: 'Compact Smart Contract (*.compact)',
+                            accept: {
+                                'text/plain': ['.compact'],
+                            },
+                        },
+                    ],
+                });
+                const writable = await handle.createWritable();
+                await writable.write(sourceCode);
+                await writable.close();
+                setFilename(handle.name);
+                setIsDirty(false);
+                toast.success('Contract Saved', `Saved to ${handle.name}`);
+                setIsSaveAsModalOpen(false);
+                return;
+            } catch (err: any) {
+                if (err.name === 'AbortError') return;
+                console.warn('showSaveFilePicker error, falling back to download:', err);
+            }
+        }
+
+        // Fallback standard download
+        handleStandardDownload();
+    };
+
+    // Save As: Save to Workspace Directory via Server API
+    const handleSaveAsWorkspace = async () => {
+        const safeFilename = saveAsFilename.trim().endsWith('.compact')
+            ? saveAsFilename.trim()
+            : `${saveAsFilename.trim()}.compact`;
+
+        setIsSavingWorkspace(true);
+        try {
+            const res = await fetch('/api/compiler/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceCode,
+                    filename: safeFilename,
+                    folder: saveAsFolder.trim() || 'contracts',
+                }),
+            });
+
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+                throw new Error(data.error || 'Failed to save to workspace folder');
+            }
+
+            setFilename(data.data.filename);
+            setIsDirty(false);
+            toast.success(
+                'Saved to Workspace Folder',
+                `Saved as ${data.data.folder}/${data.data.filename}`
+            );
+            setIsSaveAsModalOpen(false);
+        } catch (err: any) {
+            console.error('Save to workspace failed:', err);
+            toast.error('Save Failed', err.message || 'Error saving file to workspace');
+        } finally {
+            setIsSavingWorkspace(false);
+        }
+    };
+
+    // Save As: Browser Direct Download
+    const handleStandardDownload = () => {
+        const safeFilename = saveAsFilename.trim().endsWith('.compact')
+            ? saveAsFilename.trim()
+            : `${saveAsFilename.trim()}.compact`;
+        const blob = new Blob([sourceCode], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = safeFilename;
+        a.click();
+        URL.revokeObjectURL(url);
+        setFilename(safeFilename);
+        setIsDirty(false);
+        toast.success('Contract Saved', `Downloaded ${safeFilename}`);
+        setIsSaveAsModalOpen(false);
+    };
+
+    return (
+        <div className="mx-auto max-w-7xl w-full px-4 py-6 sm:px-6 space-y-6 flex flex-col min-h-[calc(100vh-5rem)]">
+            <Breadcrumbs />
+
+            {/* Header & Controls */}
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div className="flex items-center space-x-3">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/25">
+                        <Code2 className="h-6 w-6" />
+                    </div>
+                    <div>
+                        <div className="flex items-center space-x-2">
+                            <h1 className="text-2xl font-bold tracking-tight text-white">
+                                Compact Web Studio & IDE
+                            </h1>
+                            <span className="rounded-full bg-indigo-500/10 text-indigo-300 px-2.5 py-0.5 text-xs font-semibold border border-indigo-500/30">
+                                In-Browser Compiler
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                            Author, test, and compile Zero-Knowledge smart contracts for Midnight.
+                        </p>
+                    </div>
+                </div>
+
+                {/* Top Action Buttons */}
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                    {/* Hidden file input fallback */}
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileInputChange}
+                        accept=".compact,.txt"
+                        className="hidden"
+                    />
+
+                    {/* Open Contract Button */}
+                    <button
+                        onClick={openLoadModal}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 px-3 py-2 text-xs font-semibold text-slate-300 border border-white/10 hover:bg-midnight-800 hover:text-white transition-colors cursor-pointer"
+                        title="Open a .compact contract from local disk or workspace"
+                    >
+                        <FolderOpen className="h-3.5 w-3.5 text-cyan-400" />
+                        <span>Open...</span>
+                    </button>
+
+                    {/* Quick Save Button (Ctrl+S) */}
+                    <button
+                        onClick={handleQuickSave}
+                        disabled={isSaving}
+                        className={`inline-flex items-center space-x-1.5 rounded-xl px-3 py-2 text-xs font-semibold border transition-colors cursor-pointer ${
+                            isDirty
+                                ? 'bg-indigo-600/30 text-indigo-200 border-indigo-500/50 hover:bg-indigo-600/40 shadow-sm'
+                                : 'bg-midnight-900 text-slate-300 border-white/10 hover:bg-midnight-800'
+                        }`}
+                        title="Save to workspace contracts/ folder (Ctrl+S)"
+                    >
+                        <Save className="h-3.5 w-3.5 text-emerald-400" />
+                        <span>{isSaving ? 'Saving...' : 'Save'}</span>
+                        {isDirty && <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />}
+                    </button>
+
+                    {/* Save As Button */}
+                    <button
+                        onClick={openSaveAsModal}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 px-3 py-2 text-xs font-semibold text-slate-300 border border-white/10 hover:bg-midnight-800 transition-colors cursor-pointer"
+                        title="Save as a new .compact file or select destination folder"
+                    >
+                        <Download className="h-3.5 w-3.5 text-indigo-400" />
+                        <span>Save As...</span>
+                    </button>
+
+                    <button
+                        onClick={handleFormat}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 px-3 py-2 text-xs font-semibold text-slate-300 border border-white/10 hover:bg-midnight-800 transition-colors"
+                        title="Format Compact code"
+                    >
+                        <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+                        <span className="hidden sm:inline">Format</span>
+                    </button>
+
+                    {/* Skip ZK Prover toggle for lightning fast debugging */}
+                    <label className="flex items-center space-x-2 text-xs text-slate-400 bg-midnight-900/90 px-3 py-2 rounded-xl border border-white/5 cursor-pointer hover:border-white/10 select-none">
+                        <input
+                            type="checkbox"
+                            checked={skipZk}
+                            onChange={(e) => setSkipZk(e.target.checked)}
+                            className="rounded bg-midnight-950 border-white/20 text-indigo-600 focus:ring-0 h-3.5 w-3.5"
+                        />
+                        <span title="Skip generating proving keys for faster TS type checking">
+                            Fast Mode (--skip-zk)
+                        </span>
+                    </label>
+
+                    {/* Persist to contracts/managed toggle */}
+                    <label className="flex items-center space-x-2 text-xs text-slate-300 bg-midnight-900/90 px-3 py-2 rounded-xl border border-white/5 cursor-pointer hover:border-white/10 select-none">
+                        <input
+                            type="checkbox"
+                            checked={persistToManaged}
+                            onChange={(e) => setPersistToManaged(e.target.checked)}
+                            className="rounded bg-midnight-950 border-white/20 text-indigo-600 focus:ring-0 h-3.5 w-3.5"
+                        />
+                        <span title="Save compiled artifacts to contracts/managed/<name>">
+                            Sync to <code className="text-cyan-300 font-mono">contracts/managed/</code>
+                        </span>
+                    </label>
+
+                    {/* Compile Button */}
+                    <button
+                        onClick={handleCompile}
+                        disabled={isCompiling}
+                        className="inline-flex items-center space-x-2 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-500 px-5 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                        {isCompiling ? (
+                            <>
+                                <RefreshCw className="h-4 w-4 animate-spin" />
+                                <span>Compiling Circuits...</span>
+                            </>
+                        ) : (
+                            <>
+                                <Play className="h-4 w-4 fill-current" />
+                                <span>Compile Contract</span>
+                            </>
+                        )}
+                    </button>
+
+                    {/* Run Tests Button (Ctrl+T) */}
+                    <button
+                        onClick={handleRunTests}
+                        disabled={isRunningTests || isCompiling}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 px-3.5 py-2 text-xs font-bold shadow-lg shadow-emerald-950/30 hover:bg-emerald-600/40 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                        title="Run Vitest circuit unit tests (Ctrl+T)"
+                    >
+                        {isRunningTests ? (
+                            <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                                <span>Running Tests...</span>
+                            </>
+                        ) : (
+                            <>
+                                <FlaskConical className="h-3.5 w-3.5 text-emerald-400" />
+                                <span>Run Tests</span>
+                            </>
+                        )}
+                    </button>
+
+                    {/* Deploy Button */}
+                    <Link
+                        href={`/deploy?contract=${encodeURIComponent(filename.replace(/\.compact$/, ''))}`}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 px-3.5 py-2 text-xs font-bold text-white shadow-lg shadow-purple-950/30 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
+                        title="Deploy this contract to Midnight Preprod"
+                    >
+                        <Rocket className="h-3.5 w-3.5" />
+                        <span>Deploy</span>
+                    </Link>
+                </div>
+            </div>
+
+            {/* Template Selector Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-midnight-900/60 p-3 rounded-2xl border border-white/5">
+                <div className="flex items-center space-x-2 overflow-x-auto pb-1 sm:pb-0">
+                    <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider whitespace-nowrap mr-1">
+                        Templates:
+                    </span>
+                    {COMPACT_TEMPLATES.map((tmpl) => (
+                        <button
+                            key={tmpl.id}
+                            onClick={() => handleSelectTemplate(tmpl)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all ${
+                                selectedTemplate.id === tmpl.id
+                                    ? 'bg-indigo-600/30 text-indigo-200 border border-indigo-500/40 shadow-inner'
+                                    : 'bg-midnight-950 text-slate-400 hover:text-white border border-white/5'
+                            }`}
+                        >
+                            {tmpl.title}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="flex items-center space-x-2">
+                    <span className="text-xs text-slate-400">File:</span>
+                    <input
+                        type="text"
+                        value={filename}
+                        onChange={(e) => {
+                            setFilename(e.target.value);
+                            setSaveAsFilename(e.target.value);
+                            setIsDirty(true);
+                        }}
+                        className="rounded-lg bg-midnight-950 px-2.5 py-1 text-xs font-mono text-cyan-300 border border-white/10 focus:border-indigo-500 focus:outline-none w-48"
+                        placeholder="filename.compact"
+                    />
+                </div>
+            </div>
+
+            {/* Main IDE Workspace: Editor Left / Studio Output Right */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-[560px]">
+                {/* Left: Monaco Editor (7 cols) */}
+                <div className="lg:col-span-7 flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-950/90 shadow-2xl overflow-hidden min-h-[500px]">
+                    {/* Editor Tab Header */}
+                    <div className="flex items-center justify-between border-b border-white/10 bg-midnight-900/80 px-4 py-2 text-xs">
+                        <div className="flex items-center space-x-2">
+                            <FileCode2 className="h-4 w-4 text-indigo-400" />
+                            <span className="font-mono text-slate-200 font-medium">{filename}</span>
+                            {isDirty ? (
+                                <span className="text-[10px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 flex items-center gap-1">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                    <span>Unsaved (Ctrl+S)</span>
+                                </span>
+                            ) : (
+                                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                    Saved
+                                </span>
+                            )}
+                            <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20">
+                                Compact
+                            </span>
+                        </div>
+                        <span className="text-[11px] text-slate-500 font-mono">
+                            {sourceCode.split('\n').length} lines
+                        </span>
+                    </div>
+
+                    {/* Monaco Editor Container */}
+                    <div className="flex-1 w-full min-h-[480px] relative">
+                        <Editor
+                            height="100%"
+                            language={COMPACT_LANGUAGE_ID}
+                            value={sourceCode}
+                            onChange={(value) => {
+                                setSourceCode(value || '');
+                                setIsDirty(true);
+                            }}
+                            onMount={handleEditorDidMount}
+                            options={{
+                                fontSize: 13,
+                                fontFamily: "'JetBrains Mono', 'Fira Code', 'Menlo', monospace",
+                                minimap: { enabled: false },
+                                tabSize: 2,
+                                wordWrap: 'on',
+                                automaticLayout: true,
+                                scrollBeyondLastLine: false,
+                                lineNumbers: 'on',
+                                renderLineHighlight: 'all',
+                                padding: { top: 12, bottom: 12 },
+                            }}
+                            theme="compact-midnight-dark"
+                        />
+                    </div>
+                </div>
+
+                {/* Right: Compiler Output & Artifact Studio (5 cols) */}
+                <div className="lg:col-span-5 flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-900/70 backdrop-blur-xl shadow-2xl overflow-hidden min-h-[500px]">
+                    {/* Studio Tabs Header */}
+                    <div className="flex items-center justify-between border-b border-white/10 bg-midnight-950/80 px-3 py-2">
+                        <div className="flex space-x-1">
+                            <button
+                                onClick={() => setActiveTab('circuits')}
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                                    activeTab === 'circuits'
+                                        ? 'bg-indigo-600 text-white shadow'
+                                        : 'text-slate-400 hover:text-white'
+                                }`}
+                            >
+                                <Zap className="h-3.5 w-3.5" />
+                                <span>Circuits</span>
+                            </button>
+
+                            <button
+                                onClick={() => setActiveTab('dts')}
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                                    activeTab === 'dts'
+                                        ? 'bg-indigo-600 text-white shadow'
+                                        : 'text-slate-400 hover:text-white'
+                                }`}
+                            >
+                                <FileCode2 className="h-3.5 w-3.5" />
+                                <span>Types (.d.ts)</span>
+                            </button>
+
+                            <button
+                                onClick={() => setActiveTab('console')}
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                                    activeTab === 'console'
+                                        ? 'bg-indigo-600 text-white shadow'
+                                        : 'text-slate-400 hover:text-white'
+                                }`}
+                            >
+                                <Terminal className="h-3.5 w-3.5" />
+                                <span>Console</span>
+                                {compilationResult?.diagnostics?.length > 0 && (
+                                    <span className="ml-1 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[10px] text-white">
+                                        {compilationResult.diagnostics.length}
+                                    </span>
+                                )}
+                            </button>
+
+                            <button
+                                onClick={() => setActiveTab('js')}
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                                    activeTab === 'js'
+                                        ? 'bg-indigo-600 text-white shadow'
+                                        : 'text-slate-400 hover:text-white'
+                                }`}
+                            >
+                                <span>JS Runtime</span>
+                            </button>
+
+                            <button
+                                onClick={() => setActiveTab('tests')}
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                                    activeTab === 'tests'
+                                        ? 'bg-emerald-600 text-white shadow'
+                                        : 'text-slate-400 hover:text-white'
+                                }`}
+                            >
+                                <FlaskConical className="h-3.5 w-3.5" />
+                                <span>Tests</span>
+                                {testResult && (
+                                    <span className={`ml-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full text-[10px] font-bold ${
+                                        testResult.failedTests === 0
+                                            ? 'bg-emerald-400/30 text-emerald-200'
+                                            : 'bg-rose-500 text-white'
+                                    }`}>
+                                        {testResult.failedTests === 0 ? '✓' : testResult.failedTests}
+                                    </span>
+                                )}
+                            </button>
+                        </div>
+
+                        {compilationResult?.success && (
+                            <span className="flex items-center space-x-1 text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                <CheckCircle2 className="h-3 w-3" />
+                                <span>Compiled ({compilationResult.durationMs}ms)</span>
+                            </span>
+                        )}
+                    </div>
+
+                    {/* Studio Tab Contents */}
+                    <div className="flex-1 p-4 overflow-y-auto space-y-4">
+                        {/* Tab 1: Circuits & State Inspector */}
+                        {activeTab === 'circuits' && (
+                            <div className="space-y-4">
+                                {compilationResult?.success ? (
+                                    <>
+                                        {/* Deployment Handoff Card */}
+                                        <div className="rounded-xl bg-gradient-to-br from-indigo-950/60 via-midnight-950 to-midnight-950 border border-indigo-500/30 p-4 space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center space-x-2 text-white font-bold text-sm">
+                                                    <Sparkles className="h-4 w-4 text-cyan-400" />
+                                                    <span>Ready for Midnight Preprod</span>
+                                                </div>
+                                                <span className="text-[10px] uppercase font-semibold text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                                                    Prover Keys Ready
+                                                </span>
+                                            </div>
+                                            <p className="text-xs text-slate-300 leading-relaxed">
+                                                Your Compact contract compiled successfully with Zero-Knowledge circuits.
+                                            </p>
+                                            <Link
+                                                href="/deploy"
+                                                className="inline-flex items-center justify-center space-x-2 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 px-4 py-2.5 text-xs font-bold text-white shadow-md hover:scale-[1.01] transition-transform"
+                                            >
+                                                <Rocket className="h-4 w-4" />
+                                                <span>Deploy this Contract in Deploy Studio</span>
+                                            </Link>
+                                        </div>
+
+                                        {/* Managed Output Path Confirmation */}
+                                        {compilationResult.managedPath && (
+                                            <div className="rounded-xl bg-midnight-950 p-3.5 border border-indigo-500/20 flex items-start space-x-3 text-xs">
+                                                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                                                <div className="space-y-0.5">
+                                                    <span className="font-semibold text-slate-200 block">
+                                                        Compiled Artifacts Saved to Workspace
+                                                    </span>
+                                                    <p className="text-[11px] text-slate-400 font-mono">
+                                                        ./{compilationResult.managedPath}/ (contract/index.d.ts, keys, zkir)
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Exported Circuits List */}
+                                        <div className="space-y-2">
+                                            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
+                                                <Zap className="h-3.5 w-3.5 text-amber-400" />
+                                                <span>Exported Circuits ({compilationResult.circuits?.length || 0})</span>
+                                            </span>
+                                            {compilationResult.circuits?.length > 0 ? (
+                                                <div className="space-y-2">
+                                                    {compilationResult.circuits.map((c: any) => (
+                                                        <div
+                                                            key={c.name}
+                                                            className="rounded-xl bg-midnight-950 p-3 border border-white/5 space-y-1"
+                                                        >
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-mono text-xs font-bold text-white">
+                                                                    {c.name}()
+                                                                </span>
+                                                                <span className="text-[10px] text-cyan-300 font-mono">
+                                                                    ZK Provable
+                                                                </span>
+                                                            </div>
+                                                            <p className="font-mono text-[11px] text-slate-400">
+                                                                Params: <code className="text-slate-300">{c.params || '()'}</code>
+                                                            </p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="text-xs italic text-slate-500">No exported circuits detected.</p>
+                                            )}
+                                        </div>
+
+                                        {/* Ledger State Fields */}
+                                        <div className="space-y-2">
+                                            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center space-x-1.5">
+                                                <Shield className="h-3.5 w-3.5 text-cyan-400" />
+                                                <span>On-Chain Disclosed State ({compilationResult.stateFields?.length || 0})</span>
+                                            </span>
+                                            {compilationResult.stateFields?.length > 0 ? (
+                                                <div className="space-y-2">
+                                                    {compilationResult.stateFields.map((s: any) => (
+                                                        <div
+                                                            key={s.name}
+                                                            className="rounded-xl bg-midnight-950 p-3 border border-white/5 flex items-center justify-between"
+                                                        >
+                                                            <span className="font-mono text-xs text-slate-200">
+                                                                {s.name}
+                                                            </span>
+                                                            <span className="font-mono text-[11px] text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
+                                                                {s.type}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="text-xs italic text-slate-500">No ledger state variables declared.</p>
+                                            )}
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center py-16 text-center space-y-3">
+                                        <FileCode2 className="h-10 w-10 text-slate-600" />
+                                        <div>
+                                            <h4 className="text-sm font-bold text-slate-300">No Compiled Circuits Yet</h4>
+                                            <p className="text-xs text-slate-500 mt-1 max-w-xs">
+                                                Click "Compile Contract" above to run the Compact compiler and inspect circuits.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Tab 2: TypeScript Declaration View */}
+                        {activeTab === 'dts' && (
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs text-slate-400 font-mono">contract/index.d.ts</span>
+                                    {compilationResult?.files?.dts && (
+                                        <button
+                                            onClick={copyDts}
+                                            className="inline-flex items-center space-x-1 text-xs text-slate-400 hover:text-white"
+                                        >
+                                            {copiedDts ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                                            <span>{copiedDts ? 'Copied' : 'Copy'}</span>
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="rounded-xl bg-midnight-950 p-3.5 border border-white/5 font-mono text-xs text-slate-200 overflow-x-auto max-h-[460px]">
+                                    <pre>{compilationResult?.files?.dts || '// Click "Compile Contract" to generate TypeScript declarations.'}</pre>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Tab 3: Compiler Console & Diagnostics */}
+                        {activeTab === 'console' && (
+                            <div className="space-y-3">
+                                {/* Error Diagnostics Cards */}
+                                {compilationResult?.diagnostics?.length > 0 && (
+                                    <div className="space-y-2">
+                                        <span className="text-xs font-semibold text-rose-400 flex items-center space-x-1">
+                                            <AlertCircle className="h-3.5 w-3.5" />
+                                            <span>Compiler Diagnostics ({compilationResult.diagnostics.length})</span>
+                                        </span>
+                                        {compilationResult.diagnostics.map((diag: any, idx: number) => (
+                                            <div
+                                                key={idx}
+                                                onClick={() => handleJumpToLine(diag.line, diag.column)}
+                                                className="rounded-xl bg-rose-950/40 border border-rose-500/30 p-3 text-xs text-rose-200 space-y-1 cursor-pointer hover:border-rose-400 transition-colors"
+                                            >
+                                                <div className="flex items-center justify-between font-mono text-[11px] text-rose-300">
+                                                    <span>Line {diag.line}, Col {diag.column}</span>
+                                                    <span className="text-[10px] underline">Jump to code</span>
+                                                </div>
+                                                <p className="leading-relaxed font-sans">{diag.message}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Raw Terminal Output */}
+                                <div className="space-y-1.5">
+                                    <span className="text-xs font-semibold text-slate-400">Raw Compiler Stream</span>
+                                    <div className="rounded-xl bg-midnight-950 p-3.5 border border-white/5 font-mono text-xs text-slate-300 overflow-x-auto max-h-[360px] whitespace-pre-wrap">
+                                        {compilationResult?.stdout || compilationResult?.stderr ? (
+                                            `${compilationResult.stdout}\n${compilationResult.stderr}`.trim()
+                                        ) : (
+                                            <span className="text-slate-500">Compact compiler idle. Click "Compile Contract" to run.</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Tab 4: JS Runtime Code */}
+                        {activeTab === 'js' && (
+                            <div className="space-y-3">
+                                <span className="text-xs text-slate-400 font-mono">contract/index.js</span>
+                                <div className="rounded-xl bg-midnight-950 p-3.5 border border-white/5 font-mono text-xs text-slate-300 overflow-x-auto max-h-[460px]">
+                                    <pre>{compilationResult?.files?.js || '// Click "Compile Contract" to view emitted JavaScript runtime.'}</pre>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Tab 5: Circuit Unit Tests */}
+                        {activeTab === 'tests' && (
+                            <div className="space-y-4">
+                                {testResult ? (
+                                    <div className="space-y-4">
+                                        {/* Test Suite Summary Banner */}
+                                        <div
+                                            className={`rounded-xl p-4 border ${
+                                                testResult.failedTests === 0
+                                                    ? 'bg-emerald-950/40 border-emerald-500/30'
+                                                    : 'bg-rose-950/40 border-rose-500/30'
+                                            }`}
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center space-x-2.5">
+                                                    {testResult.failedTests === 0 ? (
+                                                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                                            <CheckCircle2 className="h-5 w-5" />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                                                            <AlertCircle className="h-5 w-5" />
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <h4 className="text-sm font-bold text-white">
+                                                            {testResult.failedTests === 0
+                                                                ? 'All Circuit Tests Passed'
+                                                                : `${testResult.failedTests} of ${testResult.totalTests} Tests Failed`}
+                                                        </h4>
+                                                        <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
+                                                            {testResult.targetTestFile || 'tests/contracts/'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <button
+                                                    onClick={handleRunTests}
+                                                    disabled={isRunningTests}
+                                                    className="inline-flex items-center space-x-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-3 py-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                                                >
+                                                    <RefreshCw className={`h-3 w-3 ${isRunningTests ? 'animate-spin' : ''}`} />
+                                                    <span>Re-run</span>
+                                                </button>
+                                            </div>
+
+                                            {/* Summary Stats Row */}
+                                            <div className="grid grid-cols-4 gap-2 mt-4 pt-3 border-t border-white/10 text-center">
+                                                <div className="bg-midnight-950/70 p-2 rounded-lg border border-white/5">
+                                                    <div className="text-[10px] uppercase font-semibold text-slate-400">Total</div>
+                                                    <div className="text-sm font-bold text-white">{testResult.totalTests}</div>
+                                                </div>
+                                                <div className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">
+                                                    <div className="text-[10px] uppercase font-semibold text-emerald-400">Passed</div>
+                                                    <div className="text-sm font-bold text-emerald-300">{testResult.passedTests}</div>
+                                                </div>
+                                                <div className="bg-rose-500/10 p-2 rounded-lg border border-rose-500/20">
+                                                    <div className="text-[10px] uppercase font-semibold text-rose-400">Failed</div>
+                                                    <div className="text-sm font-bold text-rose-300">{testResult.failedTests}</div>
+                                                </div>
+                                                <div className="bg-midnight-950/70 p-2 rounded-lg border border-white/5">
+                                                    <div className="text-[10px] uppercase font-semibold text-slate-400">Duration</div>
+                                                    <div className="text-sm font-bold text-cyan-300">{testResult.totalDurationMs}ms</div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Test Suites and Test Cases */}
+                                        <div className="space-y-3">
+                                            {testResult.suites?.map((suite: any, idx: number) => (
+                                                <div key={idx} className="rounded-xl bg-midnight-950/80 border border-white/10 overflow-hidden">
+                                                    <div className="flex items-center justify-between bg-midnight-900/90 px-3.5 py-2.5 border-b border-white/5">
+                                                        <div className="flex items-center space-x-2">
+                                                            <FlaskConical className="h-3.5 w-3.5 text-cyan-400" />
+                                                            <span className="font-mono text-xs font-semibold text-slate-200">{suite.name}</span>
+                                                        </div>
+                                                        <span className="text-[10px] text-slate-400 font-mono">{suite.durationMs}ms</span>
+                                                    </div>
+
+                                                    <div className="divide-y divide-white/5 p-1">
+                                                        {suite.tests?.map((testCase: any, tIdx: number) => (
+                                                            <div key={tIdx} className="p-2.5 rounded-lg hover:bg-white/[0.02] transition-colors space-y-1.5">
+                                                                <div className="flex items-start justify-between gap-2">
+                                                                    <div className="flex items-start space-x-2">
+                                                                        {testCase.status === 'passed' ? (
+                                                                            <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                                                                        ) : (
+                                                                            <AlertCircle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                                                                        )}
+                                                                        <div>
+                                                                            <p className="text-xs font-medium text-slate-200 leading-snug">
+                                                                                {testCase.title}
+                                                                            </p>
+                                                                            <span className="text-[10px] text-slate-500 font-mono">
+                                                                                {testCase.suite}
+                                                                            </span>
+                                                                        </div>
+                                                                    </div>
+                                                                    <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-white/5 px-2 py-0.5 rounded">
+                                                                        {testCase.durationMs}ms
+                                                                    </span>
+                                                                </div>
+
+                                                                {testCase.failureMessages?.length > 0 && (
+                                                                    <div className="mt-2 p-2.5 rounded-lg bg-rose-950/50 border border-rose-500/30 text-rose-200 font-mono text-[11px] whitespace-pre-wrap overflow-x-auto">
+                                                                        {testCase.failureMessages.join('\n')}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center p-8 text-center rounded-xl bg-midnight-950/40 border border-white/5 space-y-3 min-h-[300px]">
+                                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                            <FlaskConical className="h-6 w-6" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-semibold text-white">No Test Results Yet</h4>
+                                            <p className="text-xs text-slate-400 max-w-sm mt-1">
+                                                Execute circuit unit tests in-memory to verify Compact assertions, witness execution, and state transitions.
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={handleRunTests}
+                                            disabled={isRunningTests}
+                                            className="inline-flex items-center space-x-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-950/40 hover:bg-emerald-500 transition-colors cursor-pointer"
+                                        >
+                                            <Play className="h-3.5 w-3.5 fill-current" />
+                                            <span>{isRunningTests ? 'Running Tests...' : 'Run Circuit Unit Tests (Ctrl+T)'}</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Load / Open Contract Modal */}
+            {isOpenModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-lg rounded-2xl bg-midnight-900 border border-cyan-500/30 p-6 shadow-2xl space-y-5">
+                        <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                            <div className="flex items-center space-x-2.5">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                                    <FolderOpen className="h-4.5 w-4.5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-white">Open Compact Contract</h3>
+                                    <p className="text-[11px] text-slate-400">Load a contract into the studio editor</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setIsOpenModalOpen(false)}
+                                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+
+                        {/* Open from local computer */}
+                        <div
+                            onClick={handleNativeFileOpen}
+                            className="p-4 rounded-xl border border-cyan-500/30 bg-cyan-950/30 hover:bg-cyan-900/40 hover:border-cyan-500/60 transition-all cursor-pointer flex items-center justify-between group"
+                        >
+                            <div className="flex items-center space-x-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 group-hover:scale-105 transition-transform">
+                                    <Upload className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h4 className="text-xs font-bold text-white group-hover:text-cyan-200">
+                                        Browse Computer...
+                                    </h4>
+                                    <p className="text-[11px] text-slate-400 mt-0.5">
+                                        Select any <code className="text-cyan-300 font-mono">.compact</code> file from your file system
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="text-xs font-semibold text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded-lg border border-cyan-500/20">
+                                Browse
+                            </span>
+                        </div>
+
+                        {/* Workspace files list */}
+                        <div className="space-y-2 pt-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
+                                    <HardDrive className="h-3.5 w-3.5 text-indigo-400" />
+                                    <span>Contracts in Project (<code className="text-indigo-300 font-mono">contracts/</code>)</span>
+                                </span>
+                                <button
+                                    onClick={fetchWorkspaceFiles}
+                                    className="text-[11px] text-slate-400 hover:text-white"
+                                >
+                                    Refresh
+                                </button>
+                            </div>
+
+                            {isLoadingFiles ? (
+                                <div className="py-6 text-center text-xs text-slate-400 flex items-center justify-center space-x-2">
+                                    <RefreshCw className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+                                    <span>Scanning contracts directory...</span>
+                                </div>
+                            ) : workspaceFiles.length > 0 ? (
+                                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                                    {workspaceFiles.map((file) => (
+                                        <div
+                                            key={file.relativePath}
+                                            onClick={() => handleLoadWorkspaceFile(file.relativePath)}
+                                            className="p-2.5 rounded-xl border border-white/5 bg-midnight-950 hover:bg-indigo-950/40 hover:border-indigo-500/30 transition-all cursor-pointer flex items-center justify-between group"
+                                        >
+                                            <div className="flex items-center space-x-2.5 min-w-0">
+                                                <FileCode2 className="h-4 w-4 text-indigo-400 shrink-0" />
+                                                <div className="truncate">
+                                                    <span className="font-mono text-xs font-bold text-slate-200 group-hover:text-indigo-200 block truncate">
+                                                        {file.relativePath}
+                                                    </span>
+                                                    <span className="text-[10px] text-slate-500">
+                                                        {(file.sizeBytes / 1024).toFixed(1)} KB • {new Date(file.updatedAt).toLocaleDateString()}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <button
+                                                className="text-[11px] font-semibold text-indigo-300 bg-indigo-500/10 group-hover:bg-indigo-500/20 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0"
+                                            >
+                                                Load
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-xs italic text-slate-500 py-3 text-center">
+                                    No .compact files found in workspace contracts/ folder.
+                                </p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Save As Modal */}
+            {isSaveAsModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-lg rounded-2xl bg-midnight-900 border border-indigo-500/30 p-6 shadow-2xl space-y-5">
+                        <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                            <div className="flex items-center space-x-2.5">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                    <Save className="h-4.5 w-4.5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-white">Save Contract As...</h3>
+                                    <p className="text-[11px] text-slate-400">Save as a .compact smart contract file</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setIsSaveAsModalOpen(false)}
+                                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+
+                        {/* File Details Form */}
+                        <div className="space-y-4">
+                            <div className="space-y-1.5">
+                                <label className="block text-xs font-medium text-slate-300">
+                                    File Name <span className="text-rose-400">*</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    value={saveAsFilename}
+                                    onChange={(e) => setSaveAsFilename(e.target.value)}
+                                    className="w-full rounded-xl bg-midnight-950 border border-white/10 px-3.5 py-2.5 text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                                    placeholder="contract-name.compact"
+                                />
+                                <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                                    <span className="text-indigo-400 font-mono">Format:</span>
+                                    <span>Compact Smart Contract Source (<code className="text-cyan-300 font-mono">*.compact</code>)</span>
+                                </p>
+                            </div>
+
+                            {/* Save Options Grid */}
+                            <div className="space-y-3 pt-2">
+                                <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider block">
+                                    Choose Save Destination:
+                                </span>
+
+                                {/* Option 1: Native System Folder Picker */}
+                                <div
+                                    onClick={handleNativeFilePickerSaveAs}
+                                    className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-950/30 hover:bg-indigo-900/40 hover:border-indigo-500/60 transition-all cursor-pointer flex items-start space-x-3 group"
+                                >
+                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 group-hover:scale-105 transition-transform mt-0.5">
+                                        <FolderOpen className="h-4.5 w-4.5" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center justify-between">
+                                            <h4 className="text-xs font-bold text-white group-hover:text-indigo-200">
+                                                Select Folder on Computer
+                                            </h4>
+                                            <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-semibold">
+                                                Native Picker
+                                            </span>
+                                        </div>
+                                        <p className="text-[11px] text-slate-400 mt-0.5">
+                                            Opens your operating system folder dialog to choose any directory and save with <code className="text-indigo-300 font-mono">.compact</code> extension.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                {/* Option 2: Save directly to Project Workspace Folder */}
+                                <div className="p-3.5 rounded-xl border border-white/10 bg-midnight-950/70 space-y-2.5">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center space-x-2 text-xs font-bold text-white">
+                                            <HardDrive className="h-4 w-4 text-cyan-400" />
+                                            <span>Save to Project Workspace Folder</span>
+                                        </div>
+                                        <span className="text-[10px] text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20 font-semibold">
+                                            Server Folder
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        <input
+                                            type="text"
+                                            value={saveAsFolder}
+                                            onChange={(e) => setSaveAsFolder(e.target.value)}
+                                            placeholder="contracts"
+                                            className="flex-1 rounded-lg bg-midnight-900 border border-white/10 px-3 py-1.5 text-xs text-slate-200 font-mono placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                                        />
+                                        <button
+                                            onClick={handleSaveAsWorkspace}
+                                            disabled={isSavingWorkspace || !saveAsFolder.trim()}
+                                            className="px-3.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs transition-colors disabled:opacity-50 cursor-pointer"
+                                        >
+                                            {isSavingWorkspace ? 'Saving...' : 'Save Here'}
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-slate-500">
+                                        Target path: <code className="text-slate-400 font-mono">./{saveAsFolder || 'contracts'}/{saveAsFilename.endsWith('.compact') ? saveAsFilename : `${saveAsFilename}.compact`}</code>
+                                    </p>
+                                </div>
+
+                                {/* Option 3: Browser Download Fallback */}
+                                <div
+                                    onClick={handleStandardDownload}
+                                    className="p-3 rounded-xl border border-white/5 bg-midnight-950/40 hover:bg-white/5 transition-colors cursor-pointer flex items-center justify-between text-xs text-slate-400 hover:text-white"
+                                >
+                                    <div className="flex items-center space-x-2">
+                                        <Download className="h-3.5 w-3.5 text-slate-400" />
+                                        <span>Download to default Downloads folder</span>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-slate-500">Direct download</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}

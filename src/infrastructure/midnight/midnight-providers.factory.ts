@@ -12,9 +12,15 @@ if (typeof (globalThis as any).WebSocket === 'undefined') {
     (globalThis as any).WebSocket = WebSocket;
 }
 
-export function createProviders(walletCtx: any) {
+export interface ProviderOptions {
+    privateStatePassword?: string;
+    zkConfigPath?: string;
+}
+
+export function createProviders(walletCtx: any, options?: ProviderOptions) {
     const projectRoot = process.cwd();
-    const zkConfigPath = path.resolve(projectRoot, 'contracts', 'managed', 'hello-world');
+    const zkConfigPath = options?.zkConfigPath || path.resolve(projectRoot, 'contracts', 'managed', 'hello-world');
+    const password = options?.privateStatePassword?.trim() || MIDNIGHT_CONFIG.privateStatePassword;
 
     const walletProvider = {
         getCoinPublicKey: () => walletCtx.shieldedSecretKeys.coinPublicKey,
@@ -58,7 +64,7 @@ export function createProviders(walletCtx: any) {
     // Persistent file-based private state provider
     const privateStateProvider = new FilePrivateStateProvider({
         accountId,
-        privateStoragePasswordProvider: () => MIDNIGHT_CONFIG.privateStatePassword,
+        privateStoragePasswordProvider: () => password,
     });
 
     return {

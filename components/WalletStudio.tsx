@@ -25,11 +25,12 @@ interface WalletStudioProps {
   seed: string;
   setSeed: (seed: string) => void;
   walletStatus: {
-    address: string;
+    address?: string;
+    unshieldedAddress?: string;
     isSynced: boolean;
     tNightBalance: string;
     dustBalance: string;
-    faucetUrl: string;
+    faucetUrl?: string;
     syncProgress?: {
       appliedId: string;
       highestTransactionId: string;
@@ -42,7 +43,7 @@ interface WalletStudioProps {
   } | null;
   isLoading: boolean;
   onRefresh: () => void;
-  onRegisterDust: () => Promise<void>;
+  onRegisterDust: () => Promise<any>;
   isRegisteringDust: boolean;
   defaultSeed?: string;
   onOpenSyncDashboard?: () => void;

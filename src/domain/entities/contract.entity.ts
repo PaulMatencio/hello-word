@@ -6,6 +6,7 @@ export interface ContractDeploymentRecord {
     contractAddress: string;
     deployedAt?: string;
     deployerSeed?: string;
+    seed?: string;
     network?: string;
 }
 
@@ -31,6 +32,7 @@ export interface TransactionExecutionReceipt {
 export interface DeploymentExecutionReceipt {
     success: boolean;
     contractAddress: string;
+    contractType?: string;
     dustPaid: string;
     durationMs: number;
     network: string;
