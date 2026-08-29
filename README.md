@@ -7,6 +7,7 @@ A full-stack decentralized Zero-Knowledge application and interactive CLI built 
 ## 🌟 Features
 
 - **Compact Studio IDE & Test Runner**: In-browser Monaco editor for `.compact` smart contracts with custom Monarch syntax highlighting, error squiggles, starter templates, in-memory circuit unit test runner (`Ctrl+T`), and direct deployment handoff.
+- **✨ Gemini 3.7 Flash AI Copilot**: Native AI assistant integrated directly into the Compact Web Studio for automated compiler error diagnosis, Midnight.js client SDK generation, Vitest unit test scaffolding, and Zero-Knowledge privacy & constraint auditing.
 - **Local Circuit Unit Test Suite**: Fast in-memory circuit testing (<100ms) with Vitest and built-in assertion & witness verification without network or DUST costs.
 - **Decentralized On-Chain Message Board**: Real-time inspection and live polling of public disclosed state from the Midnight Preprod indexer.
 - **Zero-Knowledge Message Publisher**: Proves, balances, signs, and broadcasts `storeMessage` circuit transactions with a step-by-step visual pipeline (*Sync -> ZK Proof -> Balance DUST -> Block Confirmation*).
@@ -102,6 +103,23 @@ Open **[http://localhost:3000](http://localhost:3000)** in your browser.
 - **Sync Telemetry Monitor**: Click the sync indicator or monitor button to open the live dashboard tracking multi-state machine convergence (Unshielded, Shielded, DUST), indexing throughput, and real-time event feeds.
 - **Contract Manager**: Deploy a new instance of the contract or switch active contract addresses.
 
+### Compact Studio & Gemini 3.7 Flash AI Copilot (`/ide`)
+The in-browser IDE Studio features an integrated **Gemini 3.7 Flash** AI Copilot designed specifically for Zero-Knowledge smart contract development:
+1. **AI Streaming Backend Endpoint (`/api/ai/compact`)**:
+   - Powered by the official `@google/genai` SDK with model `gemini-3.7-flash`.
+   - Conditioned with deep Midnight domain knowledge: Compact type system, witness 2-tuple return conventions (`[PS, Value]`), ZK assertion constraints, and `@midnight-ntwrk/midnight-js-contracts` client patterns.
+   - Streams responses in real-time via `ReadableStream`.
+2. **Interactive AI Copilot Panel (`AiCopilotPanel`)**:
+   - **🛠️ Fix Compiler Error**: Consumes compiler stdout, stderr, and line diagnostics to immediately diagnose syntax or type errors and generate working fixes.
+   - **⚡ Generate Client SDK**: Scaffolds complete, strongly typed TypeScript client adapters using Midnight.js and compact runtime contexts.
+   - **🧪 Generate Vitest Tests**: Auto-generates unit test suites with simulated constructor/circuit contexts and mock witness handlers.
+   - **🔒 Audit ZK & Privacy**: Scans circuits for private witness leakage, unconstrained variables, and state transition flaws.
+   - **1-Click "Apply to Editor"**: Directly inserts generated Compact contract code into the Monaco Editor.
+   - **Flexible API Keys**: Uses `GEMINI_API_KEY` from `.env.local` or allows entering a key directly in the UI settings drawer (stored in browser `localStorage`).
+3. **Seamless IDE Studio Integration**:
+   - Dedicated **"✨ AI Copilot"** tab in the Studio inspector panel.
+   - Contextual **"Fix with Gemini 3.7 Flash"** shortcut buttons inside the **Console** tab when compilation errors occur.
+
 ### Web CLI Mode
 Click the **"Web CLI"** tab in the top navigation bar to open the built-in terminal emulator. Available commands:
 - `help` — Show available commands
@@ -134,6 +152,9 @@ npm run deploy
 .
 ├── app/
 │   ├── api/
+│   │   ├── ai/compact/route.ts           # Gemini 3.7 Flash AI Copilot streaming endpoint
+│   │   ├── compiler/compile/route.ts     # In-browser Compact compiler & ZK artifact builder
+│   │   ├── compiler/test/route.ts        # In-memory Vitest circuit test execution API
 │   │   ├── contract/state/route.ts       # Query on-chain message state
 │   │   ├── contract/message/route.ts     # Submit ZK storeMessage transaction
 │   │   ├── contract/deploy/route.ts      # Deploy new contract
@@ -143,8 +164,10 @@ npm run deploy
 │   │   └── system/status/route.ts        # Check Proof Server & Indexer health
 │   ├── globals.css                       # Dark Cyber/Midnight theme & glassmorphism styles
 │   ├── layout.tsx                        # Root layout with fonts and metadata
+│   ├── ide/page.tsx                      # Compact Web Studio & in-browser IDE with Monaco
 │   └── page.tsx                          # Main interactive dashboard page
 ├── components/
+│   ├── AiCopilotPanel.tsx                # Gemini 3.7 Flash interactive Copilot & quick actions
 │   ├── Header.tsx                        # Navigation, network badges & health monitor
 │   ├── MessageBoard.tsx                  # On-chain message hero display & address switcher
 │   ├── MessagePublisher.tsx              # Zero-Knowledge transaction visualizer & form

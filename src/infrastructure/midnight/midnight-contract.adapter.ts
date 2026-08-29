@@ -32,7 +32,7 @@ if (typeof globalThis.Reflect?.get === 'function') {
             if (target === undefined || target === null || (typeof target !== 'object' && typeof target !== 'function')) {
                 return undefined;
             }
-            return originalReflectGet.apply(this, arguments as any);
+            return originalReflectGet(target, propertyKey, receiver);
         };
         (safeReflectGet as any).__isSafeWasmReflectGet = true;
         globalThis.Reflect.get = safeReflectGet as any;

@@ -41,11 +41,12 @@ import {
     compactTheme,
 } from '@/src/infrastructure/ide/compact-monarch';
 import { COMPACT_TEMPLATES, CompactTemplate } from '@/src/infrastructure/ide/compact-templates';
+import { AiCopilotPanel } from '@/components/AiCopilotPanel';
 
 // Dynamically import Monaco to prevent SSR issues
 const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
-type OutputTab = 'console' | 'dts' | 'circuits' | 'js' | 'tests';
+type OutputTab = 'console' | 'dts' | 'circuits' | 'js' | 'tests' | 'ai';
 
 interface WorkspaceFile {
     name: string;
@@ -129,6 +130,15 @@ export default function CompactIdePage() {
             toast.error('Save Failed', err.message || 'Could not save contract to workspace');
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    // Apply code suggested by Gemini AI Copilot to Monaco Editor
+    const handleApplyAiCode = (newCode: string) => {
+        setSourceCode(newCode);
+        setIsDirty(true);
+        if (editorRef.current) {
+            editorRef.current.setValue(newCode);
         }
     };
 
@@ -839,6 +849,21 @@ export default function CompactIdePage() {
                                     </span>
                                 )}
                             </button>
+
+                            <button
+                                onClick={() => setActiveTab('ai')}
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                                    activeTab === 'ai'
+                                        ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25'
+                                        : 'text-slate-400 hover:text-white'
+                                }`}
+                            >
+                                <Sparkles className="h-3.5 w-3.5 text-cyan-300" />
+                                <span>AI Copilot</span>
+                                {(compilationResult?.success === false || (compilationResult?.diagnostics && compilationResult.diagnostics.length > 0)) && (
+                                    <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
+                                )}
+                            </button>
                         </div>
 
                         {compilationResult?.success && (
@@ -994,10 +1019,20 @@ export default function CompactIdePage() {
                                 {/* Error Diagnostics Cards */}
                                 {compilationResult?.diagnostics?.length > 0 && (
                                     <div className="space-y-2">
-                                        <span className="text-xs font-semibold text-rose-400 flex items-center space-x-1">
-                                            <AlertCircle className="h-3.5 w-3.5" />
-                                            <span>Compiler Diagnostics ({compilationResult.diagnostics.length})</span>
-                                        </span>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-semibold text-rose-400 flex items-center space-x-1">
+                                                <AlertCircle className="h-3.5 w-3.5" />
+                                                <span>Compiler Diagnostics ({compilationResult.diagnostics.length})</span>
+                                            </span>
+                                            <button
+                                                onClick={() => setActiveTab('ai')}
+                                                className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-gradient-to-r from-rose-600 to-purple-600 text-white text-[11px] font-bold shadow hover:scale-105 transition-all cursor-pointer"
+                                                title="Open Gemini AI Copilot to automatically diagnose and fix this error"
+                                            >
+                                                <Sparkles className="h-3 w-3" />
+                                                <span>Fix with Gemini 3.7 Flash</span>
+                                            </button>
+                                        </div>
                                         {compilationResult.diagnostics.map((diag: any, idx: number) => (
                                             <div
                                                 key={idx}
@@ -1174,6 +1209,20 @@ export default function CompactIdePage() {
                                         </button>
                                     </div>
                                 )}
+                            </div>
+                        )}
+
+                        {/* Tab 6: AI Copilot */}
+                        {activeTab === 'ai' && (
+                            <div className="h-full -m-4">
+                                <AiCopilotPanel
+                                    filename={filename}
+                                    sourceCode={sourceCode}
+                                    compilerResult={compilationResult}
+                                    testResult={testResult}
+                                    onApplyCodeToEditor={handleApplyAiCode}
+                                    onSwitchTab={(tab) => setActiveTab(tab as OutputTab)}
+                                />
                             </div>
                         )}
                     </div>

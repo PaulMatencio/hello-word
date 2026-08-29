@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as CompactRuntime from '@midnight-ntwrk/compact-runtime';
-import { Contract, State, ledger } from '../../contracts/managed/bulletin-board/contract/index.js';
+import { Contract, State, ledger, type Witnesses } from '../../contracts/managed/bulletin-board/contract/index.js';
 import * as crypto from 'node:crypto';
 
 describe('Bulletin Board Compact Circuit Unit Tests', () => {
@@ -8,7 +8,7 @@ describe('Bulletin Board Compact Circuit Unit Tests', () => {
     const mockSkA = new Uint8Array(32).fill(1);
     const mockSkB = new Uint8Array(32).fill(2);
 
-    const createMockWitnesses = (sk: Uint8Array) => ({
+    const createMockWitnesses = (sk: Uint8Array): Witnesses<any> => ({
         localSecretKey: (context: any) => {
             const ps = context?.privateState || {};
             return [{ ...ps, secretKey: sk }, sk];
