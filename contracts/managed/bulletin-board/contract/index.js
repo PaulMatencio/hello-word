@@ -100,7 +100,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('post',
                                      'argument 1 (as invoked from Typescript)',
-                                     'bulletin-board.compact line 35 char 1',
+                                     'bulletin-board.compact line 23 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -126,7 +126,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('takeDown',
                                      'argument 1 (as invoked from Typescript)',
-                                     'bulletin-board.compact line 43 char 1',
+                                     'bulletin-board.compact line 30 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -284,7 +284,7 @@ export class Contract {
     if (!(result_0.buffer instanceof ArrayBuffer && result_0.BYTES_PER_ELEMENT === 1 && result_0.length === 32)) {
       __compactRuntime.typeError('localSecretKey',
                                  'return value',
-                                 'bulletin-board.compact line 32 char 1',
+                                 'bulletin-board.compact line 15 char 1',
                                  'Bytes<32>',
                                  result_0)
     }
@@ -325,7 +325,7 @@ export class Contract {
                                                                                                                                                                alignment: _descriptor_11.alignment() } }] } },
                                                                                                                                     { popeq: { cached: true,
                                                                                                                                                result: undefined } }]).value),
-                                                                         'bulletin-board.compact line 37 char 48'));
+                                                                         'bulletin-board.compact line 25 char 48'));
     __compactRuntime.queryLedgerState(context,
                                       partialProofData,
                                       [
@@ -402,7 +402,7 @@ export class Contract {
                                                                                                                                                                                        alignment: _descriptor_11.alignment() } }] } },
                                                                                                                                                             { popeq: { cached: true,
                                                                                                                                                                        result: undefined } }]).value),
-                                                                                                 'bulletin-board.compact line 45 char 47'))),
+                                                                                                 'bulletin-board.compact line 32 char 47'))),
                             'Attempted to take down post, but not the current owner');
     const formerMsg_0 = _descriptor_5.fromValue(__compactRuntime.queryLedgerState(context,
                                                                                   partialProofData,
@@ -551,14 +551,14 @@ export const pureCircuits = {
     if (!(sk_0.buffer instanceof ArrayBuffer && sk_0.BYTES_PER_ELEMENT === 1 && sk_0.length === 32)) {
       __compactRuntime.typeError('publicKey',
                                  'argument 1',
-                                 'bulletin-board.compact line 54 char 1',
+                                 'bulletin-board.compact line 40 char 1',
                                  'Bytes<32>',
                                  sk_0)
     }
     if (!(sequence_0.buffer instanceof ArrayBuffer && sequence_0.BYTES_PER_ELEMENT === 1 && sequence_0.length === 32)) {
       __compactRuntime.typeError('publicKey',
                                  'argument 2',
-                                 'bulletin-board.compact line 54 char 1',
+                                 'bulletin-board.compact line 40 char 1',
                                  'Bytes<32>',
                                  sequence_0)
     }

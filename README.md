@@ -110,11 +110,12 @@ The in-browser IDE Studio features an integrated **Gemini 3.7 Flash** AI Copilot
    - Conditioned with deep Midnight domain knowledge: Compact type system, witness 2-tuple return conventions (`[PS, Value]`), ZK assertion constraints, and `@midnight-ntwrk/midnight-js-contracts` client patterns.
    - Streams responses in real-time via `ReadableStream`.
 2. **Interactive AI Copilot Panel (`AiCopilotPanel`)**:
-   - **🛠️ Fix Compiler Error**: Consumes compiler stdout, stderr, and line diagnostics to immediately diagnose syntax or type errors and generate working fixes.
-   - **⚡ Generate Client SDK**: Scaffolds complete, strongly typed TypeScript client adapters using Midnight.js and compact runtime contexts.
+   - **🛠️ Fix Compiler Error**: Consumes compiler stdout, stderr, and line diagnostics to immediately diagnose syntax or type errors and generate working fixes with automatic recompilation.
+   - **⚡ Generate Client SDK & Documentation**: Scaffolds both comprehensive Markdown SDK documentation (architecture, ledger schema, witness/privacy rules, circuit reference, quickstart walkthrough) and a production-grade, strongly typed TypeScript client adapter.
    - **🧪 Generate Vitest Tests**: Auto-generates unit test suites with simulated constructor/circuit contexts and mock witness handlers.
    - **🔒 Audit ZK & Privacy**: Scans circuits for private witness leakage, unconstrained variables, and state transition flaws.
-   - **1-Click "Apply to Editor"**: Directly inserts generated Compact contract code into the Monaco Editor.
+   - **1-Click "Apply to Editor"**: Directly inserts generated Compact contract code into Monaco Editor and auto-recompiles.
+   - **Save & Download**: Save generated TypeScript clients (`src/client/`), unit tests (`tests/contracts/`), and Markdown documentation (`docs/`) directly into your project workspace.
    - **Flexible API Keys**: Uses `GEMINI_API_KEY` from `.env.local` or allows entering a key directly in the UI settings drawer (stored in browser `localStorage`).
 3. **Seamless IDE Studio Integration**:
    - Dedicated **"✨ AI Copilot"** tab in the Studio inspector panel.

@@ -22,6 +22,8 @@ import {
     HelpCircle,
     Code2,
     ExternalLink,
+    Save,
+    Download,
 } from 'lucide-react';
 import { useToast } from '@/src/presentation/context/ToastContext';
 
@@ -52,6 +54,7 @@ export function AiCopilotPanel({
     onSwitchTab,
 }: AiCopilotPanelProps) {
     const toast = useToast();
+    const [isMounted, setIsMounted] = useState<boolean>(false);
     const [messages, setMessages] = useState<AiMessage[]>([
         {
             id: 'welcome',
@@ -80,17 +83,38 @@ Ask a question below or click one of the quick actions to get started!`,
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    // Load saved API key & model preferences from localStorage
+    // Restore saved settings & chat history once mounted on client
     useEffect(() => {
+        setIsMounted(true);
         try {
             const savedKey = localStorage.getItem('midnight_gemini_api_key');
             const savedModel = localStorage.getItem('midnight_gemini_model');
+            const savedMessages = localStorage.getItem('midnight_ide_copilot_messages');
+
             if (savedKey) setApiKey(savedKey);
             if (savedModel) setSelectedModel(savedModel);
+            if (savedMessages) {
+                const parsed = JSON.parse(savedMessages);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    setMessages(parsed);
+                }
+            }
         } catch {
-            // Ignore localStorage errors
+            // Ignore
         }
     }, []);
+
+    // Persist messages to localStorage ONLY after client has mounted
+    useEffect(() => {
+        if (!isMounted) return;
+        if (messages.length > 0) {
+            try {
+                localStorage.setItem('midnight_ide_copilot_messages', JSON.stringify(messages));
+            } catch {
+                // Ignore
+            }
+        }
+    }, [isMounted, messages, isStreaming]);
 
     const saveApiKey = (key: string) => {
         setApiKey(key);
@@ -253,14 +277,21 @@ Ask a question below or click one of the quick actions to get started!`,
     };
 
     const handleClearChat = () => {
-        setMessages([
+        const resetMsg: AiMessage[] = [
             {
                 id: 'welcome-reset',
                 role: 'assistant',
                 content: `Chat history cleared. How can I assist you with **${filename}**?`,
                 timestamp: new Date(),
             },
-        ]);
+        ];
+        setMessages(resetMsg);
+        try {
+            localStorage.setItem('midnight_ide_copilot_messages', JSON.stringify(resetMsg));
+        } catch {
+            // Ignore
+        }
+        toast.info('Chat Cleared', 'Copilot conversation history has been reset.');
     };
 
     const copyToClipboard = (text: string, id: string) => {
@@ -268,6 +299,317 @@ Ask a question below or click one of the quick actions to get started!`,
         setCopiedIndex(id);
         toast.success('Copied to Clipboard', 'Code copied.');
         setTimeout(() => setCopiedIndex(null), 2000);
+    };
+
+    const detectFileMeta = (code: string, language: string, rawFilename: string) => {
+        const baseName = rawFilename.replace(/\.compact$/, '');
+        const lang = (language || '').toLowerCase().trim();
+        const trimmed = code.trim();
+
+        // 1. Shell / Terminal Commands (Must be checked FIRST so npm install is never treated as TypeScript)
+        if (
+            lang === 'bash' ||
+            lang === 'sh' ||
+            lang === 'shell' ||
+            lang === 'zsh' ||
+            trimmed.startsWith('npm ') ||
+            trimmed.startsWith('yarn ') ||
+            trimmed.startsWith('pnpm ') ||
+            trimmed.startsWith('npx ') ||
+            trimmed.startsWith('docker ') ||
+            trimmed.startsWith('cd ') ||
+            trimmed.startsWith('$ ') ||
+            trimmed.startsWith('git ')
+        ) {
+            return {
+                folder: 'scripts',
+                filename: `${baseName}-install.sh`,
+                typeLabel: 'Shell / Terminal Script',
+                icon: 'sh',
+                badgeColor: 'text-amber-300 bg-amber-500/20 border-amber-500/30',
+                isCompact: false,
+                isTsSdk: false,
+                isExample: false,
+                isTest: false,
+                isDoc: false,
+                isShell: true,
+            };
+        }
+
+        // 2. Architecture Diagrams / ASCII Art / Mermaid
+        if (
+            lang === 'mermaid' ||
+            lang === 'ascii' ||
+            lang === 'diagram' ||
+            trimmed.includes('┌─') ||
+            trimmed.includes('└─') ||
+            trimmed.includes('├──') ||
+            trimmed.includes('+--') ||
+            (lang === 'text' && (trimmed.includes('-->') || trimmed.includes('|') || trimmed.includes('===')))
+        ) {
+            return {
+                folder: 'docs',
+                filename: `${baseName}-architecture.txt`,
+                typeLabel: 'Architecture Diagram',
+                icon: 'diagram',
+                badgeColor: 'text-slate-300 bg-slate-700/50 border-white/10',
+                isCompact: false,
+                isTsSdk: false,
+                isExample: false,
+                isTest: false,
+                isDoc: true,
+                isShell: false,
+            };
+        }
+
+        // 3. Compact Smart Contract
+        if (
+            lang === 'compact' ||
+            (trimmed.includes('export ledger') && trimmed.includes('export circuit')) ||
+            (trimmed.includes('pragma language_version') && trimmed.includes('export'))
+        ) {
+            return {
+                folder: 'contracts',
+                filename: `${baseName}.compact`,
+                typeLabel: 'Compact Smart Contract',
+                icon: 'compact',
+                badgeColor: 'text-indigo-300 bg-indigo-500/20 border-indigo-500/30',
+                isCompact: true,
+                isTsSdk: false,
+                isExample: false,
+                isTest: false,
+                isDoc: false,
+                isShell: false,
+            };
+        }
+
+        // 4. Vitest Test Suite
+        if (
+            (trimmed.includes('describe(') && (trimmed.includes('it(') || trimmed.includes('test('))) ||
+            trimmed.includes("from 'vitest'") ||
+            trimmed.includes('from "vitest"')
+        ) {
+            return {
+                folder: 'tests/contracts',
+                filename: `${baseName}.test.ts`,
+                typeLabel: 'Vitest Unit Tests',
+                icon: 'test',
+                badgeColor: 'text-emerald-300 bg-emerald-500/20 border-emerald-500/30',
+                isCompact: false,
+                isTsSdk: false,
+                isExample: false,
+                isTest: true,
+                isDoc: false,
+                isShell: false,
+            };
+        }
+
+        // 5. Production TypeScript Client SDK (Full Class Adapter) - Must be checked BEFORE pure types
+        if (
+            (trimmed.includes('class ') || trimmed.includes('export class ') || trimmed.includes('constructor(')) &&
+            !trimmed.includes('describe(') &&
+            !trimmed.includes('async function main')
+        ) {
+            return {
+                folder: 'src/client',
+                filename: `${baseName}-sdk.ts`,
+                typeLabel: 'TypeScript SDK Client',
+                icon: 'ts',
+                badgeColor: 'text-cyan-300 bg-cyan-500/20 border-cyan-500/30',
+                isCompact: false,
+                isTsSdk: true,
+                isExample: false,
+                isTest: false,
+                isDoc: false,
+                isShell: false,
+            };
+        }
+
+        // 6. Usage Walkthrough / Quickstart Script (e.g. async function main(), client.storeMessage(...))
+        if (
+            trimmed.includes('async function main') ||
+            trimmed.includes('async function run') ||
+            trimmed.includes('async function example') ||
+            (trimmed.includes('const client = new') && trimmed.includes('await client.')) ||
+            trimmed.includes('// Step ') ||
+            trimmed.includes('// 1.') ||
+            trimmed.includes('// Quickstart')
+        ) {
+            return {
+                folder: 'examples',
+                filename: `${baseName}-example.ts`,
+                typeLabel: 'Usage Example',
+                icon: 'example',
+                badgeColor: 'text-blue-300 bg-blue-500/20 border-blue-500/30',
+                isCompact: false,
+                isTsSdk: false,
+                isExample: true,
+                isTest: false,
+                isDoc: false,
+                isShell: false,
+            };
+        }
+
+        // 7. API Reference & Pure Type Signatures (Interfaces / Types only, without class)
+        if (
+            (trimmed.startsWith('interface ') || trimmed.startsWith('export interface ') || trimmed.startsWith('type ') || trimmed.startsWith('export type ')) ||
+            trimmed.includes('interface ') ||
+            trimmed.includes('type Ledger') ||
+            trimmed.includes('type PrivateState')
+        ) {
+            return {
+                folder: 'src/client',
+                filename: `${baseName}-types.ts`,
+                typeLabel: 'API Type Definitions',
+                icon: 'ts',
+                badgeColor: 'text-indigo-300 bg-indigo-500/20 border-indigo-500/30',
+                isCompact: false,
+                isTsSdk: false,
+                isExample: false,
+                isTest: false,
+                isDoc: false,
+                isShell: false,
+            };
+        }
+
+        // 8. General TypeScript / JavaScript Module Fallback
+        if (lang === 'typescript' || lang === 'ts' || lang === 'js' || lang === 'javascript') {
+            return {
+                folder: 'src/client',
+                filename: `${baseName}-sdk.ts`,
+                typeLabel: 'TypeScript SDK Client',
+                icon: 'ts',
+                badgeColor: 'text-cyan-300 bg-cyan-500/20 border-cyan-500/30',
+                isCompact: false,
+                isTsSdk: true,
+                isExample: false,
+                isTest: false,
+                isDoc: false,
+                isShell: false,
+            };
+        }
+
+        // 8. Markdown / Documentation
+        if (lang === 'markdown' || lang === 'md' || trimmed.startsWith('# ') || trimmed.includes('## ')) {
+            return {
+                folder: 'docs',
+                filename: `${baseName}-sdk.md`,
+                typeLabel: 'SDK Documentation',
+                icon: 'doc',
+                badgeColor: 'text-purple-300 bg-purple-500/20 border-purple-500/30',
+                isCompact: false,
+                isTsSdk: false,
+                isExample: false,
+                isTest: false,
+                isDoc: true,
+                isShell: false,
+            };
+        }
+
+        return {
+            folder: 'docs',
+            filename: `${baseName}-notes.txt`,
+            typeLabel: lang || 'Text Snippet',
+            icon: 'txt',
+            badgeColor: 'text-slate-300 bg-slate-700/50 border-white/10',
+            isCompact: false,
+            isTsSdk: false,
+            isExample: false,
+            isTest: false,
+            isDoc: true,
+            isShell: false,
+        };
+    };
+
+    // Save code snippet directly to workspace (with intelligent path suggestion)
+    const handleSaveSnippetToFile = async (code: string, language: string) => {
+        const meta = detectFileMeta(code, language, filename);
+
+        const targetPath = prompt(`Enter workspace path to save this file:`, `${meta.folder}/${meta.filename}`);
+        if (!targetPath) return;
+
+        const parts = targetPath.trim().split('/');
+        const saveName = parts.pop() || meta.filename;
+        const saveFolder = parts.join('/') || '.';
+
+        try {
+            const res = await fetch('/api/compiler/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceCode: code,
+                    filename: saveName,
+                    folder: saveFolder,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                toast.success('File Saved to Workspace', `Saved to ${data.data.folder}/${data.data.filename}`);
+            } else {
+                throw new Error(data.error || 'Failed to save file');
+            }
+        } catch (err: any) {
+            toast.error('Save Failed', err.message);
+        }
+    };
+
+    // Save entire markdown documentation to workspace
+    const handleSaveFullDocToFile = async (fullContent: string) => {
+        const baseName = filename.replace(/\.compact$/, '');
+        const targetPath = prompt(`Enter workspace path to save SDK documentation:`, `docs/${baseName}-sdk.md`);
+        if (!targetPath) return;
+
+        const parts = targetPath.trim().split('/');
+        const saveName = parts.pop() || `${baseName}-sdk.md`;
+        const saveFolder = parts.join('/') || 'docs';
+
+        try {
+            const res = await fetch('/api/compiler/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceCode: fullContent,
+                    filename: saveName,
+                    folder: saveFolder,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                toast.success('Documentation Saved', `Saved to ${data.data.folder}/${data.data.filename}`);
+            } else {
+                throw new Error(data.error || 'Failed to save documentation');
+            }
+        } catch (err: any) {
+            toast.error('Save Failed', err.message);
+        }
+    };
+
+    // Download snippet as a local file
+    const handleDownloadSnippet = (code: string, language: string) => {
+        const meta = detectFileMeta(code, language, filename);
+
+        const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = meta.filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success('File Downloaded', `Downloaded ${meta.filename}`);
+    };
+
+    // Download full markdown documentation
+    const handleDownloadFullDoc = (fullContent: string) => {
+        const baseName = filename.replace(/\.compact$/, '');
+        const docName = `${baseName}-sdk.md`;
+        const blob = new Blob([fullContent], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = docName;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success('Documentation Downloaded', `Downloaded ${docName}`);
     };
 
     // Helper to parse markdown code blocks for extraction
@@ -286,11 +628,21 @@ Ask a question below or click one of the quick actions to get started!`,
     };
 
     // Render formatted markdown content with interactive code blocks
-    const renderMessageContent = (content: string, msgId: string) => {
+    const renderMessageContent = (content: string, msgId: string, role: string = 'assistant') => {
         const blocks = extractCodeBlocks(content);
 
+        // Find key deliverables by their robust classifier
+        const tsSdkBlock = blocks.find((b) => detectFileMeta(b.code, b.language, filename).isTsSdk);
+        const exampleBlock = blocks.find((b) => detectFileMeta(b.code, b.language, filename).isExample);
+        const testBlock = blocks.find((b) => detectFileMeta(b.code, b.language, filename).isTest);
+        const isSdkResponse = role === 'assistant' && (content.includes('SDK Documentation') || content.includes('TypeScript Client SDK') || tsSdkBlock !== undefined);
+
         if (blocks.length === 0) {
-            return <div className="whitespace-pre-wrap text-xs text-slate-200 leading-relaxed font-sans">{content}</div>;
+            return (
+                <div className="space-y-3 text-xs text-slate-200 leading-relaxed font-sans">
+                    <div className="whitespace-pre-wrap">{content}</div>
+                </div>
+            );
         }
 
         // Split text by code blocks
@@ -298,67 +650,184 @@ Ask a question below or click one of the quick actions to get started!`,
 
         return (
             <div className="space-y-3 text-xs text-slate-200 leading-relaxed">
-                {parts.map((part, index) => (
-                    <React.Fragment key={index}>
-                        {part.trim() && (
-                            <div className="whitespace-pre-wrap font-sans text-slate-200">{part.trim()}</div>
-                        )}
-                        {blocks[index] && (
-                            <div className="rounded-xl border border-indigo-500/30 bg-midnight-950 overflow-hidden shadow-lg my-2">
-                                <div className="flex items-center justify-between bg-midnight-900/90 px-3 py-1.5 border-b border-white/5 text-[11px]">
-                                    <span className="font-mono text-cyan-300 font-medium">
-                                        {blocks[index].language || 'code'}
-                                    </span>
-                                    <div className="flex items-center space-x-2">
-                                        {/* Apply to Monaco Editor Button (if compact code) */}
-                                        {(blocks[index].language === 'compact' ||
-                                            blocks[index].language === 'rust' ||
-                                            blocks[index].code.includes('export ledger') ||
-                                            blocks[index].code.includes('export circuit')) && (
-                                            <button
-                                                onClick={() => {
-                                                    onApplyCodeToEditor(blocks[index].code);
-                                                    toast.success(
-                                                        'Applied to Editor',
-                                                        'Contract code updated in Monaco Editor.'
-                                                    );
-                                                }}
-                                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-indigo-600/40 text-indigo-200 hover:bg-indigo-600 text-[10px] font-semibold border border-indigo-500/40 transition-colors"
-                                                title="Replace current Monaco Editor code with this snippet"
-                                            >
-                                                <ArrowDownToLine className="h-3 w-3" />
-                                                <span>Apply to Editor</span>
-                                            </button>
-                                        )}
+                {/* Deliverables Quick Actions Header for SDK / Multi-file Responses */}
+                {isSdkResponse && (
+                    <div className="p-3.5 rounded-2xl bg-midnight-950/95 border border-cyan-500/40 shadow-2xl space-y-2.5 mb-4">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                            <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                                <Sparkles className="h-4 w-4 text-cyan-400" />
+                                <span>Generated Deliverables</span>
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                                {blocks.length} artifact(s) available
+                            </span>
+                        </div>
 
-                                        {/* Copy code button */}
-                                        <button
-                                            onClick={() =>
-                                                copyToClipboard(blocks[index].code, `${msgId}-${index}`)
-                                            }
-                                            className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-midnight-800 text-slate-300 hover:text-white text-[10px] border border-white/10 transition-colors"
-                                        >
-                                            {copiedIndex === `${msgId}-${index}` ? (
-                                                <>
-                                                    <Check className="h-3 w-3 text-emerald-400" />
-                                                    <span className="text-emerald-400">Copied</span>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <Copy className="h-3 w-3 text-slate-400" />
-                                                    <span>Copy</span>
-                                                </>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                            {/* 1. Full Documentation Actions */}
+                            <button
+                                onClick={() => handleSaveFullDocToFile(content)}
+                                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-purple-600/30 text-purple-200 hover:bg-purple-600 hover:text-white text-[11px] font-bold border border-purple-500/40 transition-all cursor-pointer shadow-md"
+                                title="Save full documentation to docs/"
+                            >
+                                <FileCode2 className="h-3.5 w-3.5 text-purple-300" />
+                                <span>Save SDK Docs (.md)</span>
+                            </button>
+
+                            <button
+                                onClick={() => handleDownloadFullDoc(content)}
+                                className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-midnight-900 text-slate-300 hover:text-white text-[11px] border border-white/15 transition-all cursor-pointer"
+                                title="Download complete SDK documentation markdown file"
+                            >
+                                <Download className="h-3.5 w-3.5 text-slate-400" />
+                                <span>Download Docs (.md)</span>
+                            </button>
+
+                            {/* 2. TypeScript Client SDK Actions */}
+                            {tsSdkBlock && (
+                                <>
+                                    <button
+                                        onClick={() => handleSaveSnippetToFile(tsSdkBlock.code, tsSdkBlock.language)}
+                                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-cyan-600/30 text-cyan-200 hover:bg-cyan-600 hover:text-white text-[11px] font-bold border border-cyan-500/40 transition-all cursor-pointer shadow-md"
+                                        title="Save TypeScript client adapter to src/client/"
+                                    >
+                                        <Zap className="h-3.5 w-3.5 text-cyan-300" />
+                                        <span>Save Client SDK (.ts)</span>
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleDownloadSnippet(tsSdkBlock.code, tsSdkBlock.language)}
+                                        className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-midnight-900 text-slate-300 hover:text-white text-[11px] border border-white/15 transition-all cursor-pointer"
+                                        title="Download TypeScript client file"
+                                    >
+                                        <Download className="h-3.5 w-3.5 text-cyan-400" />
+                                        <span>Download Client (.ts)</span>
+                                    </button>
+                                </>
+                            )}
+
+                            {/* 3. Example Walkthrough Actions if present */}
+                            {exampleBlock && (
+                                <button
+                                    onClick={() => handleSaveSnippetToFile(exampleBlock.code, exampleBlock.language)}
+                                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-blue-600/30 text-blue-200 hover:bg-blue-600 hover:text-white text-[11px] font-bold border border-blue-500/40 transition-all cursor-pointer shadow-md"
+                                    title="Save runnable example script to examples/"
+                                >
+                                    <FileCode2 className="h-3.5 w-3.5 text-blue-300" />
+                                    <span>Save Example (.ts)</span>
+                                </button>
+                            )}
+
+                            {/* 4. Vitest Unit Tests Actions if present */}
+                            {testBlock && (
+                                <button
+                                    onClick={() => handleSaveSnippetToFile(testBlock.code, testBlock.language)}
+                                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/30 text-emerald-200 hover:bg-emerald-600 hover:text-white text-[11px] font-bold border border-emerald-500/40 transition-all cursor-pointer shadow-md"
+                                    title="Save unit tests to tests/contracts/"
+                                >
+                                    <FlaskConical className="h-3.5 w-3.5 text-emerald-300" />
+                                    <span>Save Tests (.ts)</span>
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {parts.map((part, index) => {
+                    const block = blocks[index];
+                    const meta = block ? detectFileMeta(block.code, block.language, filename) : null;
+
+                    return (
+                        <React.Fragment key={index}>
+                            {part.trim() && (
+                                <div className="whitespace-pre-wrap font-sans text-slate-200">{part.trim()}</div>
+                            )}
+                            {block && meta && (
+                                <div className="rounded-xl border border-indigo-500/30 bg-midnight-950 overflow-hidden shadow-lg my-2">
+                                    {/* Code Block Header with exact file target */}
+                                    <div className="flex items-center justify-between bg-midnight-900/90 px-3 py-1.5 border-b border-white/5 text-[11px]">
+                                        <div className="flex items-center space-x-2">
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold border ${meta.badgeColor}`}>
+                                                {meta.typeLabel}
+                                            </span>
+                                            <span className="font-mono text-slate-300 text-[11px]">
+                                                {meta.folder}/{meta.filename}
+                                            </span>
+                                        </div>
+
+                                        <div className="flex items-center space-x-1.5">
+                                            {/* Apply to Monaco Editor Button (if compact code) */}
+                                            {meta.isCompact && (
+                                                <button
+                                                    onClick={() => {
+                                                        onApplyCodeToEditor(block.code);
+                                                        toast.success(
+                                                            'Applied to Editor',
+                                                            'Contract code updated in Monaco Editor.'
+                                                        );
+                                                    }}
+                                                    className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-indigo-600/40 text-indigo-200 hover:bg-indigo-600 text-[10px] font-semibold border border-indigo-500/40 transition-colors cursor-pointer"
+                                                    title="Replace current Monaco Editor code with this snippet"
+                                                >
+                                                    <ArrowDownToLine className="h-3 w-3" />
+                                                    <span>Apply to Editor</span>
+                                                </button>
                                             )}
-                                        </button>
+
+                                            {/* Save to Workspace File */}
+                                            <button
+                                                onClick={() =>
+                                                    handleSaveSnippetToFile(block.code, block.language)
+                                                }
+                                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-200 hover:bg-emerald-600 hover:text-white text-[10px] font-semibold border border-emerald-500/40 transition-colors cursor-pointer"
+                                                title={`Save to workspace as ${meta.folder}/${meta.filename}`}
+                                            >
+                                                <Save className="h-3 w-3 text-emerald-400" />
+                                                <span>Save File</span>
+                                            </button>
+
+                                            {/* Download button */}
+                                            <button
+                                                onClick={() =>
+                                                    handleDownloadSnippet(block.code, block.language)
+                                                }
+                                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-midnight-800 text-slate-300 hover:text-white text-[10px] border border-white/10 transition-colors cursor-pointer"
+                                                title={`Download as ${meta.filename}`}
+                                            >
+                                                <Download className="h-3 w-3 text-slate-400" />
+                                                <span>Download</span>
+                                            </button>
+
+                                            {/* Copy code button */}
+                                            <button
+                                                onClick={() =>
+                                                    copyToClipboard(block.code, `${msgId}-${index}`)
+                                                }
+                                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-midnight-800 text-slate-300 hover:text-white text-[10px] border border-white/10 transition-colors cursor-pointer"
+                                                title="Copy code to clipboard"
+                                            >
+                                                {copiedIndex === `${msgId}-${index}` ? (
+                                                    <>
+                                                        <Check className="h-3 w-3 text-emerald-400" />
+                                                        <span className="text-emerald-400">Copied</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Copy className="h-3 w-3 text-slate-400" />
+                                                        <span>Copy</span>
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
                                     </div>
+                                    <pre className="p-3 overflow-x-auto text-[11px] font-mono text-slate-300 bg-midnight-950/80 leading-snug">
+                                        <code>{block.code}</code>
+                                    </pre>
                                 </div>
-                                <pre className="p-3 overflow-x-auto text-[11px] font-mono text-slate-300 bg-midnight-950/80 leading-snug">
-                                    <code>{blocks[index].code}</code>
-                                </pre>
-                            </div>
-                        )}
-                    </React.Fragment>
-                ))}
+                            )}
+                        </React.Fragment>
+                    );
+                })}
             </div>
         );
     };
@@ -541,7 +1010,7 @@ Ask a question below or click one of the quick actions to get started!`,
                             }`}
                         >
                             {msg.content ? (
-                                renderMessageContent(msg.content, msg.id)
+                                renderMessageContent(msg.content, msg.id, msg.role)
                             ) : (
                                 <div className="flex items-center space-x-2 text-xs text-slate-400 py-1">
                                     <RefreshCw className="h-3.5 w-3.5 animate-spin text-indigo-400" />

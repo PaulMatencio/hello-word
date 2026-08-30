@@ -92,11 +92,17 @@ Please:
 3. Highlight what changed and why.
 `;
         } else if (action === 'generate_client') {
+            const baseContractName = (filename || 'contract').replace(/\.compact$/, '');
+            const pascalName = baseContractName
+                .split('-')
+                .map((s: string) => s.charAt(0).toUpperCase() + s.slice(1))
+                .join('');
+
             contextualPrompt = `
-Task: Generate a production-grade TypeScript client adapter for this Compact contract.
+Task: Generate a production-grade TypeScript client SDK AND comprehensive technical documentation for this Midnight Compact smart contract.
 Contract Filename: ${filename}
 
-Compact Contract Code:
+Compact Contract Source Code:
 \`\`\`compact
 ${code}
 \`\`\`
@@ -105,11 +111,48 @@ ${dtsContent ? `Generated TypeScript Type Definitions (.d.ts):\n\`\`\`typescript
 
 ${prompt ? `Additional user requirements: ${prompt}` : ''}
 
-Please generate a complete TypeScript module that:
-1. Imports the contract bindings from \`./contract/index.js\` and \`@midnight-ntwrk/compact-runtime\`.
-2. Implements a strong-typed \`Witnesses<PS>\` implementation returning 2-element tuples \`[PS, Value]\`.
-3. Provides a high-level service / adapter class wrapping all circuits with state querying and circuit context management.
-4. Includes clean comments and usage examples.
+Please structure your response into two distinct, high-quality deliverables:
+
+### Part 1: Comprehensive SDK Documentation
+Provide detailed, structured technical documentation covering:
+1. **Contract Overview & Architecture**:
+   - Explanation of the contract purpose.
+   - Public Ledger State schema (\`export ledger ...\`) and data types.
+   - Private State & Witness specification (\`witness ...\`) and security considerations.
+   - Available Zero-Knowledge Circuits (\`export circuit ...\`) and their assertions/rules.
+2. **Prerequisites & Installation**:
+   - Required packages (\`@midnight-ntwrk/compact-runtime\`, etc.).
+3. **API Reference**:
+   - Method signatures, parameters, return types, and circuit error codes.
+4. **Step-by-Step Quickstart & Usage Walkthrough**:
+   - Provide a complete runnable TypeScript example script (intended for \`examples/${baseContractName}-example.ts\`).
+   - The script MUST begin with a header comment showing how to run it:
+     \`\`\`typescript
+     /**
+      * Quickstart Example: ${pascalName} Client SDK
+      *
+      * How to run:
+      *   npx tsx examples/${baseContractName}-example.ts
+      */
+     \`\`\`
+   - IMPORTANT: The example script MUST import the SDK adapter class directly from \`../src/client/${baseContractName}-sdk.js\` (e.g. \`import { ${pascalName}Client, type ${pascalName}PrivateState } from '../src/client/${baseContractName}-sdk.js';\`).
+   - Use 32-byte hex strings for mock test addresses and keys: \`const coinPublicKey = '01'.repeat(32);\` and \`const contractAddress = '00'.repeat(32);\` (in Midnight.js runtime, \`coinPublicKey\` and \`contractAddress\` are hex strings, NOT \`Uint8Array\`).
+   - Demonstrate: initializing contract state with \`createConstructorContext\`, tracking on-chain state via \`let currentChargedState = initResult.currentContractState.data\` (updated after circuit runs with \`currentChargedState = result.context.currentQueryContext.state\`), creating circuit contexts with \`createCircuitContext(contractAddress, coinPublicKey, currentChargedState, privateState)\`, and querying ledger state.
+5. **Privacy & Security Notes**:
+   - Off-chain witness handling, avoiding disclosure leaks, and key management.
+
+### Part 2: Production TypeScript Client SDK Implementation
+Provide the complete, strongly-typed TypeScript SDK file (intended for \`src/client/${baseContractName}-sdk.ts\`) inside a \`\`\`typescript ... \`\`\` code block that adheres strictly to Midnight.js / Compact runtime conventions:
+1. Imports from \`@midnight-ntwrk/compact-runtime\`:
+   \`import { type CircuitContext, type QueryContext, type WitnessContext, type ConstructorContext, type ConstructorResult, type CircuitResults, type StateValue, type ChargedState } from '@midnight-ntwrk/compact-runtime';\`
+2. STRICTLY imports the compiled contract artifacts from:
+   \`import { Contract as ManagedContract, ledger, type Witnesses as ContractWitnesses, type Ledger as ContractLedger } from '../../contracts/managed/${baseContractName}/contract/index.js';\` (NEVER use \`./contract/index.js\`).
+3. Defines strict TypeScript interfaces for \`${pascalName}PrivateState\`, \`${pascalName}Witnesses<PS>\` (witness functions taking \`context: WitnessContext<ContractLedger, PS>\` where off-chain private state is accessed via \`context.privateState\` and returning 2-element tuples \`[PS, ReturnValue]\`), and \`${pascalName}LedgerState = ContractLedger\`.
+4. Implements a high-level, production-ready \`${pascalName}Client\` class with:
+   - \`initialState(context: ConstructorContext<PS>): ConstructorResult<PS>\` builder.
+   - Type-safe circuit execution methods managing circuit contexts. (NOTE: Circuits with no return value in Compact return \`CircuitResults<PS, []>\` with the unit empty tuple \`[]\`, NOT \`void\`).
+   - Strongly-typed ledger state query helper: \`queryLedgerStateFromRaw(rawState: StateValue | ChargedState | unknown): ${pascalName}LedgerState { return ledger(rawState as StateValue | ChargedState); }\`.
+   - Comprehensive TSDoc inline comments.
 `;
         } else if (action === 'generate_tests') {
             contextualPrompt = `

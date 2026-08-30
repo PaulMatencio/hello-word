@@ -16,9 +16,10 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // Ensure .compact extension
+        // Ensure appropriate extension (default to .compact only if no extension provided)
         const baseName = path.basename(filename);
-        const safeFilename = baseName.endsWith('.compact') ? baseName : `${baseName}.compact`;
+        const hasExt = path.extname(baseName).length > 0;
+        const safeFilename = hasExt ? baseName : `${baseName}.compact`;
 
         // Normalize destination directory safely within workspace
         const workspaceRoot = process.cwd();

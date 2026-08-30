@@ -91,9 +91,101 @@ export default function CompactIdePage() {
     const [saveAsFolder, setSaveAsFolder] = useState<string>('contracts');
     const [isSavingWorkspace, setIsSavingWorkspace] = useState<boolean>(false);
 
+    // Hydration mount state
+    const [isMounted, setIsMounted] = useState<boolean>(false);
+
+    // Resizable Split-Pane State (percentage width for left editor pane)
+    const [leftPanelWidth, setLeftPanelWidth] = useState<number>(56);
+    const [isDraggingSplitter, setIsDraggingSplitter] = useState<boolean>(false);
+    const splitWorkspaceRef = useRef<HTMLDivElement>(null);
+
     // Keep refs for Monaco keyboard command bindings
     const handleQuickSaveRef = useRef<() => void>(() => {});
     const handleRunTestsRef = useRef<() => void>(() => {});
+
+    // Restore editor workspace session & split layout from localStorage once mounted on client
+    useEffect(() => {
+        setIsMounted(true);
+        try {
+            const savedCode = localStorage.getItem('midnight_ide_source_code');
+            const savedFilename = localStorage.getItem('midnight_ide_filename');
+            const savedTab = localStorage.getItem('midnight_ide_active_tab') as OutputTab | null;
+            const savedDirty = localStorage.getItem('midnight_ide_is_dirty');
+            const savedSplitWidth = localStorage.getItem('midnight_ide_split_width');
+
+            if (savedCode && savedFilename) {
+                setSourceCode(savedCode);
+                setFilename(savedFilename);
+                setSaveAsFilename(savedFilename);
+                const matched = COMPACT_TEMPLATES.find((t) => t.filename === savedFilename);
+                if (matched) setSelectedTemplate(matched);
+                if (editorRef.current) {
+                    editorRef.current.setValue(savedCode);
+                }
+            }
+            if (savedDirty !== null) {
+                setIsDirty(savedDirty === 'true');
+            }
+            if (savedTab) {
+                setActiveTab(savedTab);
+            }
+            if (savedSplitWidth) {
+                const parsed = parseFloat(savedSplitWidth);
+                if (!isNaN(parsed) && parsed >= 25 && parsed <= 75) {
+                    setLeftPanelWidth(parsed);
+                }
+            }
+        } catch {
+            // Ignore localStorage errors
+        }
+    }, []);
+
+    // Split pane mouse drag listener for smooth horizontal resizing
+    useEffect(() => {
+        if (!isDraggingSplitter) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!splitWorkspaceRef.current) return;
+            const containerRect = splitWorkspaceRef.current.getBoundingClientRect();
+            const relativeX = e.clientX - containerRect.left;
+            const newPercentage = (relativeX / containerRect.width) * 100;
+            const clamped = Math.min(Math.max(newPercentage, 25), 75);
+            setLeftPanelWidth(clamped);
+            try {
+                localStorage.setItem('midnight_ide_split_width', clamped.toString());
+            } catch {}
+        };
+
+        const handleMouseUp = () => {
+            setIsDraggingSplitter(false);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDraggingSplitter]);
+
+    // Persist editor workspace session to localStorage ONLY after client has mounted
+    useEffect(() => {
+        if (!isMounted) return;
+        try {
+            if (sourceCode) {
+                localStorage.setItem('midnight_ide_source_code', sourceCode);
+            }
+            if (filename) {
+                localStorage.setItem('midnight_ide_filename', filename);
+            }
+            localStorage.setItem('midnight_ide_is_dirty', String(isDirty));
+            if (activeTab) {
+                localStorage.setItem('midnight_ide_active_tab', activeTab);
+            }
+        } catch {
+            // Ignore
+        }
+    }, [isMounted, sourceCode, filename, isDirty, activeTab]);
 
     // Quick Save (to contracts/<filename>)
     const handleQuickSave = async () => {
@@ -133,12 +225,55 @@ export default function CompactIdePage() {
         }
     };
 
-    // Apply code suggested by Gemini AI Copilot to Monaco Editor
-    const handleApplyAiCode = (newCode: string) => {
+    // Apply code suggested by Gemini AI Copilot to Monaco Editor & auto-recompile
+    const handleApplyAiCode = async (newCode: string) => {
         setSourceCode(newCode);
         setIsDirty(true);
+        try {
+            localStorage.setItem('midnight_ide_source_code', newCode);
+            localStorage.setItem('midnight_ide_is_dirty', 'true');
+        } catch {
+            // Ignore
+        }
         if (editorRef.current) {
             editorRef.current.setValue(newCode);
+        }
+        updateEditorMarkers([]);
+        setCompilationResult(null);
+
+        // Auto-recompile to verify fix and clear previous error state
+        setIsCompiling(true);
+        toast.info('Fix Applied', 'Recompiling contract to verify fix...');
+        try {
+            const res = await fetch('/api/compiler/compile', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sourceCode: newCode,
+                    filename,
+                    skipZk,
+                    persistToManaged,
+                }),
+            });
+
+            const data = await res.json();
+            setCompilationResult(data);
+
+            if (data.success) {
+                updateEditorMarkers([]);
+                const msg = data.managedPath
+                    ? `Compiled in ${data.durationMs}ms & saved to ./${data.managedPath}`
+                    : `Compiled in ${data.durationMs}ms with ${data.circuits?.length || 0} circuit(s)`;
+                toast.success('Fix Verified & Compiled!', msg);
+                setActiveTab('circuits');
+            } else {
+                updateEditorMarkers(data.diagnostics || []);
+                toast.error('Compilation Still Has Issues', `${data.diagnostics?.length || 1} error(s) found`);
+            }
+        } catch (err: any) {
+            console.error('Re-compilation after fix failed:', err);
+        } finally {
+            setIsCompiling(false);
         }
     };
 
@@ -165,6 +300,16 @@ export default function CompactIdePage() {
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyT, () => {
             handleRunTestsRef.current?.();
         });
+
+        // Ensure Monaco editor displays the cached source code if already loaded
+        try {
+            const savedCode = localStorage.getItem('midnight_ide_source_code');
+            if (savedCode && savedCode !== editor.getValue()) {
+                editor.setValue(savedCode);
+            }
+        } catch {
+            // Ignore
+        }
     };
 
     // Update markers (squiggles) in Monaco on error diagnostics
@@ -194,6 +339,13 @@ export default function CompactIdePage() {
         setSourceCode(tmpl.code);
         setIsDirty(false);
         setCompilationResult(null);
+        try {
+            localStorage.setItem('midnight_ide_source_code', tmpl.code);
+            localStorage.setItem('midnight_ide_filename', tmpl.filename);
+            localStorage.setItem('midnight_ide_is_dirty', 'false');
+        } catch {
+            // Ignore
+        }
         if (monacoRef.current && editorRef.current) {
             const model = editorRef.current.getModel();
             if (model) {
@@ -236,6 +388,13 @@ export default function CompactIdePage() {
                 setIsDirty(false);
                 setCompilationResult(null);
                 setIsOpenModalOpen(false);
+                try {
+                    localStorage.setItem('midnight_ide_source_code', data.data.content);
+                    localStorage.setItem('midnight_ide_filename', data.data.filename);
+                    localStorage.setItem('midnight_ide_is_dirty', 'false');
+                } catch {
+                    // Ignore
+                }
                 toast.success('Contract Loaded', `Loaded contracts/${relativePath}`);
             } else {
                 throw new Error(data.error || 'Failed to read contract content');
@@ -667,6 +826,23 @@ export default function CompactIdePage() {
                         )}
                     </button>
 
+                    {/* Highly Visible AI Copilot Button */}
+                    <button
+                        onClick={() => setActiveTab('ai')}
+                        className={`inline-flex items-center space-x-2 rounded-xl px-4 py-2 text-xs font-bold shadow-lg transition-all cursor-pointer ${
+                            activeTab === 'ai'
+                                ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 text-white shadow-indigo-500/30 scale-[1.02] ring-2 ring-indigo-400'
+                                : 'bg-gradient-to-r from-purple-600/40 via-indigo-600/40 to-cyan-500/40 text-indigo-100 border border-indigo-500/60 hover:from-purple-600 hover:to-cyan-500 hover:text-white shadow-indigo-950/50 hover:scale-[1.02]'
+                        }`}
+                        title="Open Gemini 3.7 Flash AI Copilot"
+                    >
+                        <Sparkles className="h-4 w-4 text-cyan-300 animate-pulse" />
+                        <span>AI Copilot</span>
+                        <span className="rounded-full bg-cyan-400/20 text-cyan-200 text-[10px] px-1.5 py-0.2 border border-cyan-400/40 font-mono">
+                            3.7 Flash
+                        </span>
+                    </button>
+
                     {/* Deploy Button */}
                     <Link
                         href={`/deploy?contract=${encodeURIComponent(filename.replace(/\.compact$/, ''))}`}
@@ -716,10 +892,23 @@ export default function CompactIdePage() {
                 </div>
             </div>
 
-            {/* Main IDE Workspace: Editor Left / Studio Output Right */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1 min-h-[560px]">
-                {/* Left: Monaco Editor (7 cols) */}
-                <div className="lg:col-span-7 flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-950/90 shadow-2xl overflow-hidden min-h-[500px]">
+            {/* Main IDE Workspace: Resizable Split-Pane (Left: Editor / Right: Studio) */}
+            <div
+                ref={splitWorkspaceRef}
+                className={`flex flex-col lg:flex-row items-stretch gap-0 flex-1 min-h-[560px] relative ${
+                    isDraggingSplitter ? 'select-none cursor-col-resize' : ''
+                }`}
+                style={{
+                    ['--left-pane-width' as any]: `${leftPanelWidth}%`,
+                }}
+            >
+                {/* Left: Monaco Editor */}
+                <div
+                    className="flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-950/90 shadow-2xl overflow-hidden min-h-[500px] w-full lg:w-[calc(var(--left-pane-width)-8px)]"
+                    style={{
+                        flexShrink: 0,
+                    }}
+                >
                     {/* Editor Tab Header */}
                     <div className="flex items-center justify-between border-b border-white/10 bg-midnight-900/80 px-4 py-2 text-xs">
                         <div className="flex items-center space-x-2">
@@ -739,9 +928,19 @@ export default function CompactIdePage() {
                                 Compact
                             </span>
                         </div>
-                        <span className="text-[11px] text-slate-500 font-mono">
-                            {sourceCode.split('\n').length} lines
-                        </span>
+                        <div className="flex items-center space-x-3">
+                            <button
+                                onClick={() => setActiveTab('ai')}
+                                className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-lg bg-gradient-to-r from-purple-600/30 to-indigo-600/30 text-indigo-200 hover:from-purple-600 hover:to-indigo-600 hover:text-white border border-indigo-500/40 text-[11px] font-semibold transition-all shadow-sm"
+                                title="Open Gemini AI Copilot for this code"
+                            >
+                                <Sparkles className="h-3 w-3 text-cyan-300" />
+                                <span>Ask Copilot</span>
+                            </button>
+                            <span className="text-[11px] text-slate-500 font-mono">
+                                {sourceCode.split('\n').length} lines
+                            </span>
+                        </div>
                     </div>
 
                     {/* Monaco Editor Container */}
@@ -772,11 +971,36 @@ export default function CompactIdePage() {
                     </div>
                 </div>
 
-                {/* Right: Compiler Output & Artifact Studio (5 cols) */}
-                <div className="lg:col-span-5 flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-900/70 backdrop-blur-xl shadow-2xl overflow-hidden min-h-[500px]">
+                {/* Vertical Resizer Gutter (Desktop lg+) */}
+                <div
+                    onMouseDown={(e) => {
+                        e.preventDefault();
+                        setIsDraggingSplitter(true);
+                    }}
+                    onDoubleClick={() => {
+                        setLeftPanelWidth(56);
+                        try {
+                            localStorage.setItem('midnight_ide_split_width', '56');
+                        } catch {}
+                        toast.info('Split Reset', 'Reset editor pane layout to 56% / 44%');
+                    }}
+                    className="hidden lg:flex items-center justify-center w-4 mx-0.5 group cursor-col-resize z-20 select-none flex-shrink-0"
+                    title="Drag horizontally to resize Editor / Studio (Double-click to reset)"
+                >
+                    <div
+                        className={`w-1 h-16 rounded-full transition-all duration-150 ${
+                            isDraggingSplitter
+                                ? 'bg-gradient-to-b from-cyan-400 via-indigo-500 to-purple-500 w-1.5 shadow-lg shadow-cyan-500/50 scale-y-110'
+                                : 'bg-white/10 group-hover:bg-cyan-400/80 group-hover:w-1.5 group-hover:shadow-md group-hover:shadow-cyan-400/30'
+                        }`}
+                    />
+                </div>
+
+                {/* Right: Compiler Output & Artifact Studio */}
+                <div className="flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-900/70 backdrop-blur-xl shadow-2xl overflow-hidden min-h-[500px] w-full mt-6 lg:mt-0 lg:w-[calc(100%-var(--left-pane-width)-8px)] lg:flex-1">
                     {/* Studio Tabs Header */}
-                    <div className="flex items-center justify-between border-b border-white/10 bg-midnight-950/80 px-3 py-2">
-                        <div className="flex space-x-1">
+                    <div className="flex items-center justify-between border-b border-white/10 bg-midnight-950/80 px-3 py-2 overflow-x-auto">
+                        <div className="flex space-x-1 min-w-max">
                             <button
                                 onClick={() => setActiveTab('circuits')}
                                 className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
@@ -852,16 +1076,20 @@ export default function CompactIdePage() {
 
                             <button
                                 onClick={() => setActiveTab('ai')}
-                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm ${
                                     activeTab === 'ai'
-                                        ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25'
-                                        : 'text-slate-400 hover:text-white'
+                                        ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 text-white shadow-indigo-500/30 ring-1 ring-white/20'
+                                        : 'bg-indigo-600/30 text-indigo-100 border border-indigo-500/50 hover:bg-indigo-600/50 hover:text-white'
                                 }`}
                             >
-                                <Sparkles className="h-3.5 w-3.5 text-cyan-300" />
+                                <Sparkles className="h-3.5 w-3.5 text-cyan-300 animate-pulse" />
                                 <span>AI Copilot</span>
-                                {(compilationResult?.success === false || (compilationResult?.diagnostics && compilationResult.diagnostics.length > 0)) && (
+                                {(compilationResult?.success === false || (compilationResult?.diagnostics && compilationResult.diagnostics.length > 0)) ? (
                                     <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
+                                ) : (
+                                    <span className="text-[9px] bg-cyan-400/20 text-cyan-300 px-1 py-0.2 rounded font-mono border border-cyan-400/30">
+                                        3.7
+                                    </span>
                                 )}
                             </button>
                         </div>
