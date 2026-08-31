@@ -1,7 +1,7 @@
 pragma language_version 0.23;
 
 import CompactStandardLibrary;
- 
+
 export enum State {
   VACANT,
   OCCUPIED
@@ -12,73 +12,73 @@ export ledger message: Maybe<Opaque<"string">>;
 export ledger sequence: Counter;
 export ledger owner: Bytes<32>;
 
+// Private witness function supplying caller's secret key
 witness localSecretKey(): Bytes<32>;
 
-//
-//  initializes the contract state.
-// It sets the state to VACANT, the message to None, increments the sequence counter to 1, 
-// and sets the owner to the public key derived from the local secret key and the initial sequence.
-// 
+/**
+ * Initializes the bulletin board to VACANT state with sequence counter at 1.
+ */
 constructor() {
   state = State.VACANT;
   message = none<Opaque<"string">>();
+  owner = pad(32, "");
   sequence.increment(1);
 }
 
-//
-//  The post() circuit enforces two conditions:
-//  1. The board must be in a VACANT state.
-//  2. The owner tag is computed as the disclosure of the public key derived from the local secret key and the current sequence.
-//
-export circuit post(newMessage: Opaque<"string">): [] {
-  assert(state == State.VACANT, "Attempted to post to an occupied board");
-  owner = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
-  message = disclose(some<Opaque<"string">>(newMessage));
-  state = State.OCCUPIED;
+/**
+ * Internal helper to derive an owner verification tag in ZK.
+ */
+circuit deriveOwnerTag(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "bboard:pk:"), 
+    seq, 
+    sk
+  ]);
 }
 
-
-//
-//  The post() circuit enforces:
-//  1. Board must be VACANT OR the caller must be the current owner.
-//  2. If VACANT, new owner is set; if OCCUPIED, owner verification is required.
-//
+/**
+ * Posts a message to a VACANT board or updates the message if called by the current owner.
+ */
 export circuit postMessage(newMessage: Opaque<"string">): [] {
+  const currentSeq = sequence as Field as Bytes<32>;
+  const calculatedTag = deriveOwnerTag(localSecretKey(), currentSeq);
+
   if (state == State.VACANT) {
-    owner = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
+    // Claim board and set initial owner tag
+    owner = disclose(calculatedTag);
     message = disclose(some<Opaque<"string">>(newMessage));
     state = State.OCCUPIED;
   } else {
-    assert(state == State.OCCUPIED, "Board is in an invalid state");
-    assert(owner == publicKey(localSecretKey(), sequence as Field as Bytes<32>), 
-           "Only the current owner can override their message");
+    // Board is OCCUPIED: verify existing ownership
+    assert(owner == calculatedTag, "Only the current owner can edit the post");
+    
+    // Update message
     message = disclose(some<Opaque<"string">>(newMessage));
-    // Owner stays the same, sequence increments to update owner tag
+    
+    // Advance sequence and update owner tag for forward privacy/unlinkability
     sequence.increment(1);
-    owner = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
+    const nextSeq = sequence as Field as Bytes<32>;
+    owner = disclose(deriveOwnerTag(localSecretKey(), nextSeq));
   }
 }
 
-
-//
-//  The takeDown() circuit enforces two conditions:
-//  1. The board must be in an OCCUPIED state.
-//  2. The owner tag is computed as the disclosure of the public key derived from the local secret key and the current sequence.
-//
+/**
+ * Takes down an existing post. Only callable by the current owner.
+ */
 export circuit takeDown(): Opaque<"string"> {
   assert(state == State.OCCUPIED, "Attempted to take down post from an empty board");
-  assert(owner == publicKey(localSecretKey(), sequence as Field as Bytes<32>), "Attempted to take down post, but not the current owner");
-  const formerMsg = message.value;
-  state = State.VACANT;
-  sequence.increment(1);
-  message = none<Opaque<"string">>();
-  return formerMsg;
-}
+  
+  const currentSeq = sequence as Field as Bytes<32>;
+  const expectedTag = deriveOwnerTag(localSecretKey(), currentSeq);
+  assert(owner == expectedTag, "Attempted to take down post, but not the current owner");
+  assert(message.is_some, "Corrupted state: post is occupied but message is empty");
 
-//
-//  When an author posts a message, the post() circuit calculates 
-// the owner tag inside the ZK circuit using Midnight's cryptographic persistentHash:
-//
-export circuit publicKey(sk: Bytes<32>, sequence: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "bboard:pk:"), sequence, sk]);
+  const formerMsg = message.value;
+  
+  state = State.VACANT;
+  message = none<Opaque<"string">>();
+  owner = pad(32, "");
+  sequence.increment(1);
+
+  return formerMsg;
 }

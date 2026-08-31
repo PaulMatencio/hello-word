@@ -4,25 +4,6 @@
   "runtime-version": "0.16.0",
   "circuits": [
     {
-      "name": "post",
-      "pure": false,
-      "proof": true,
-      "arguments": [
-        {
-          "name": "newMessage",
-          "type": {
-            "type-name": "Opaque",
-            "tsType": "string"
-          }
-        }
-      ],
-      "result-type": {
-        "type-name": "Tuple",
-        "types": [
-        ]
-      }
-    },
-    {
       "name": "postMessage",
       "pure": false,
       "proof": true,
@@ -50,31 +31,6 @@
       "result-type": {
         "type-name": "Opaque",
         "tsType": "string"
-      }
-    },
-    {
-      "name": "publicKey",
-      "pure": true,
-      "proof": false,
-      "arguments": [
-        {
-          "name": "sk",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        },
-        {
-          "name": "sequence",
-          "type": {
-            "type-name": "Bytes",
-            "length": 32
-          }
-        }
-      ],
-      "result-type": {
-        "type-name": "Bytes",
-        "length": 32
       }
     }
   ],
