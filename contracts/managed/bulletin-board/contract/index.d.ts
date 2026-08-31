@@ -8,11 +8,13 @@ export type Witnesses<PS> = {
 
 export type ImpureCircuits<PS> = {
   post(context: __compactRuntime.CircuitContext<PS>, newMessage_0: string): __compactRuntime.CircuitResults<PS, []>;
+  postMessage(context: __compactRuntime.CircuitContext<PS>, newMessage_0: string): __compactRuntime.CircuitResults<PS, []>;
   takeDown(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, string>;
 }
 
 export type ProvableCircuits<PS> = {
   post(context: __compactRuntime.CircuitContext<PS>, newMessage_0: string): __compactRuntime.CircuitResults<PS, []>;
+  postMessage(context: __compactRuntime.CircuitContext<PS>, newMessage_0: string): __compactRuntime.CircuitResults<PS, []>;
   takeDown(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, string>;
 }
 
@@ -22,6 +24,7 @@ export type PureCircuits = {
 
 export type Circuits<PS> = {
   post(context: __compactRuntime.CircuitContext<PS>, newMessage_0: string): __compactRuntime.CircuitResults<PS, []>;
+  postMessage(context: __compactRuntime.CircuitContext<PS>, newMessage_0: string): __compactRuntime.CircuitResults<PS, []>;
   takeDown(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, string>;
   publicKey(context: __compactRuntime.CircuitContext<PS>,
             sk_0: Uint8Array,

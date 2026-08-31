@@ -27,6 +27,7 @@ import { useToast } from '@/src/presentation/context/ToastContext';
 import { CONTRACT_BLUEPRINTS, getContractBlueprint } from '@/src/infrastructure/contracts/contract-registry';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
 import { TransactionFeed } from '@/components/TransactionFeed';
+import { BulletinBoardWorkbench } from '@/components/BulletinBoardWorkbench';
 import type { TxRecord } from '@/src/types/tx';
 
 type ExecutionStage = 'idle' | 'syncing' | 'proving' | 'balancing' | 'submitting' | 'confirmed' | 'error';
@@ -93,8 +94,9 @@ export default function ContractWorkbenchPage({
             try {
                 const res = await fetch('/api/contracts');
                 const data = await res.json();
-                if (data.success && Array.isArray(data.data)) {
-                    const found = data.data.find((c: any) => c.contractAddress === contractAddress);
+                if (data.success && data.data) {
+                    const list = data.data.deployments || (Array.isArray(data.data) ? data.data : []);
+                    const found = list.find((c: any) => c.contractAddress === contractAddress);
                     if (found && found.contractType) {
                         const bp = getContractBlueprint(found.contractType);
                         if (bp) {
@@ -228,6 +230,27 @@ export default function ContractWorkbenchPage({
     const contractTransactions = transactions.filter(
         (tx) => !tx.txHash || tx.txHash === contractAddress || tx.message?.includes(contractAddress.slice(0, 8))
     );
+
+    if (blueprint.id === 'bulletin-board') {
+        return (
+            <div className="mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 space-y-6">
+                <div className="flex flex-col gap-3">
+                    <Breadcrumbs customLabels={{ [contractAddress]: `${contractAddress.slice(0, 8)}...` }} />
+                    <div className="flex items-center justify-between">
+                        <Link
+                            href="/contracts"
+                            className="inline-flex items-center space-x-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                            <span>Back to Contract Registry</span>
+                        </Link>
+                    </div>
+                </div>
+
+                <BulletinBoardWorkbench contractAddress={contractAddress} contractNickname={blueprint.name} />
+            </div>
+        );
+    }
 
     return (
         <div className="mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 space-y-8">

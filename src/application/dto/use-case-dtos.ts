@@ -60,3 +60,25 @@ export interface DeriveKeysInput {
 }
 
 export interface DeriveKeysOutput extends KeyDerivationResult {}
+
+// --- Bulletin Board DTOs ---
+export interface GetBulletinBoardStateInput {
+    sessionId?: string;
+}
+
+export interface ResetBulletinBoardStateInput {
+    sessionId?: string;
+}
+
+export interface RunBulletinBoardShowcaseInput {
+    sessionId?: string;
+}
+
+export interface ExecuteBulletinBoardCircuitInput {
+    sessionId?: string;
+    action: 'post' | 'postMessage' | 'takeDown';
+    identity?: string;
+    message?: string;
+    secretKeyHex?: string;
+}
+

@@ -8,142 +8,68 @@ A full-stack decentralized Zero-Knowledge application and interactive CLI built 
 
 - **Compact Studio IDE & Test Runner**: In-browser Monaco editor for `.compact` smart contracts with custom Monarch syntax highlighting, error squiggles, starter templates, in-memory circuit unit test runner (`Ctrl+T`), and direct deployment handoff.
 - **✨ Gemini 3.7 Flash AI Copilot**: Native AI assistant integrated directly into the Compact Web Studio for automated compiler error diagnosis, Midnight.js client SDK generation, Vitest unit test scaffolding, and Zero-Knowledge privacy & constraint auditing.
+- **Interactive ZK Circuit Workbenches**: Dedicated visual execution workbenches for contracts (e.g. **Bulletin Board Workbench**) supporting live board state simulation, automated 6-step ZK showcase verification pipelines, manual circuit execution (`post`, `postMessage`, `takeDown`), identity toggling (Alice vs Bob), and real-time ledger diagnostics.
+- **Clean Architecture & Hexagonal Ports & Adapters**: Fully decoupled enterprise architecture separating pure Domain Entities, Application Use Cases, Infrastructure Adapters, and Presentation/API layers with Dependency Injection.
 - **Local Circuit Unit Test Suite**: Fast in-memory circuit testing (<100ms) with Vitest and built-in assertion & witness verification without network or DUST costs.
 - **Decentralized On-Chain Message Board**: Real-time inspection and live polling of public disclosed state from the Midnight Preprod indexer.
 - **Zero-Knowledge Message Publisher**: Proves, balances, signs, and broadcasts `storeMessage` circuit transactions with a step-by-step visual pipeline (*Sync -> ZK Proof -> Balance DUST -> Block Confirmation*).
 - **Wallet Studio & Send Hub**: Multi-role HD wallet management (`Roles.Zswap`, `Roles.NightExternal`, `Roles.Dust`), live tNIGHT & DUST balance tracking, one-click DUST generation registration, and an unshielded token transfer hub with a 4-step visual execution pipeline.
 - **Sync Activity & Telemetry Monitor**: Real-time sub-wallet convergence tracking across all 3 Midnight state machines (Unshielded, Shielded Zswap, DUST Engine), live throughput rates (items/s), and real-time ingestion event feeds.
+- **Smart Contract Registry & Explorer**: Centralized catalog of deployed contracts with instant one-click navigation to dedicated execution workbenches.
 - **Interactive Web CLI / Terminal**: Embedded terminal emulator replicating the native CLI tool directly inside the browser.
 - **Contract Deployment Hub**: One-click deployment of fresh Compact smart contract instances to Midnight Preprod.
 - **Native CLI Tools**: Classic terminal interface (`npm run cli`) and deployment script (`npm run deploy`).
 
 ---
 
-## 📋 Prerequisites
+## 🏗️ Clean Architecture & Hexagonal Design
 
-Before running the application, make sure you have:
+This project strictly adheres to **Clean Architecture** and **Domain-Driven Design (DDD)** principles, guaranteeing high maintainability, testability, and decoupling between the domain business rules and infrastructure technologies:
 
-1. **Node.js**: `v22.0.0` or higher
-2. **Docker & Docker Compose**: Required for running the local Midnight Zero-Knowledge Proof Server
-3. **Compact Compiler** *(Optional)*: Only needed if you modify `contracts/hello-world.compact`
-
----
-
-## 🚀 Quick Start Guide
-
-### 1. Clone & Install Dependencies
-
-```bash
-# Clone the repository and enter the directory
-cd hello-word
-
-# Install Node dependencies
-npm install
+```
+                  ┌─────────────────────────────────────────┐
+                  │           Presentation Layer            │
+                  │   Next.js API Controllers & React UI    │
+                  └────────────────────┬────────────────────┘
+                                       │ calls
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │            Application Layer            │
+                  │   Use Cases & Data Transfer Objects     │
+                  └────────────────────┬────────────────────┘
+                                       │ defines / uses
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │              Domain Layer               │
+                  │   Pure Entities, Domain Errors & Ports  │
+                  └────────────────────▲────────────────────┘
+                                       │ implements
+                  ┌────────────────────┴────────────────────┐
+                  │          Infrastructure Layer           │
+                  │  Midnight Adapters, Persistence, DI     │
+                  └─────────────────────────────────────────┘
 ```
 
-### 2. Start the Zero-Knowledge Proof Server
+### 1. Domain Layer (`src/domain/`)
+- **Entities (`src/domain/entities/`)**: Enterprise business entities independent of any external library or framework (`contract.entity.ts`, `wallet.entity.ts`, `bulletin-board.entity.ts`, `system.entity.ts`).
+- **Ports / Gateways (`src/domain/ports/`)**: Contract interfaces defining required operations without binding to specific implementations (`IContractGateway`, `IWalletGateway`, `IBulletinBoardGateway`, `ISystemGateway`, `IDeploymentStorage`).
+- **Errors (`src/domain/errors/`)**: Strongly-typed business domain exceptions (`WalletNotSyncedError`, `InsufficientDustError`).
 
-The Midnight proof provider requires the local Proof Server Docker container running on port `6300`:
+### 2. Application Layer (`src/application/`)
+- **Use Cases (`src/application/use-cases/`)**: Application business rule orchestrators:
+  - `StoreMessageUseCase`, `DeployContractUseCase`, `GetContractStateUseCase`
+  - `GetWalletStatusUseCase`, `RegisterDustUseCase`, `SendUnshieldedTNightUseCase`
+  - `GetBulletinBoardStateUseCase`, `ResetBulletinBoardStateUseCase`, `RunBulletinBoardShowcaseUseCase`, `ExecuteBulletinBoardCircuitUseCase`
+- **DTOs (`src/application/dto/`)**: Strongly-typed request/response boundary contracts decoupling HTTP inputs from internal domain structures.
 
-```bash
-# Start Proof Server in the background
-npm run proof-server:start
+### 3. Infrastructure Layer (`src/infrastructure/`)
+- **Midnight Adapters (`src/infrastructure/midnight/`)**: Concrete implementations of domain ports interacting with `@midnight-ntwrk/wallet`, `@midnight-ntwrk/midnight-js-contracts`, and `@midnight-ntwrk/compact-runtime` (`MidnightWalletAdapter`, `MidnightContractAdapter`, `MidnightBulletinBoardAdapter`, `MidnightSystemAdapter`).
+- **Persistence Drivers (`src/infrastructure/persistence/`)**: Pluggable storage adapters supporting both local JSON file storage and Redis Stack (`redis-json`).
+- **Composition Root / DI (`src/infrastructure/di/container.ts`)**: Single dependency injection container assembling gateways, adapters, and use cases into singletons.
 
-# Verify container is running and healthy
-docker ps
-```
-
-To stop the proof server later:
-```bash
-npm run proof-server:stop
-```
-
-### 3. (Optional) Compile the Compact Smart Contract
-
-The compiled artifacts are already included under `contracts/managed/hello-world/`. If you modify the contract:
-
-```bash
-npm run compile
-```
-
-### 4. Run the Next.js Web Application
-
-Start the development server:
-
-```bash
-npm run dev
-```
-
-Open **[http://localhost:3000](http://localhost:3000)** in your browser.
-
----
-
-## 💧 Getting Test Tokens (Preprod Faucet)
-
-> [!IMPORTANT]
-> The active, working faucet for Midnight Preprod is the **Nethermind Preprod Faucet**:
-> 👉 **[https://midnight-tmnight-preprod.nethermind.dev/](https://midnight-tmnight-preprod.nethermind.dev/)**
-
-### Steps to Fund Your Wallet & Generate DUST:
-
-1. In the Web UI (or CLI), copy your **Unshielded Bech32 Address** (e.g. `mn_addr_preprod1...`).
-2. Visit the [Nethermind Faucet](https://midnight-tmnight-preprod.nethermind.dev/), paste your address, and request **tNIGHT** tokens.
-3. Once received (refresh your balance in Wallet Studio), click **"Register for DUST"**.
-4. The wallet will register your unshielded UTXOs to start accruing **DUST** tokens (gas for ZK transactions).
-
----
-
-## 💻 Using the Web Application
-
-### Interactive Studio
-- **Message Board**: Shows the latest message stored on-chain. Click **Refresh** to query the Midnight GraphQL indexer.
-- **Prove & Store Message**: Type a message and submit. The app automatically computes a Zero-Knowledge proof with your local proof server, balances the fee with DUST, and broadcasts to Midnight Preprod.
-- **Wallet Studio**: View and switch wallet seeds, inspect your Bech32 address, check live tNIGHT / DUST balances, and register for DUST.
-- **Send Unshielded tNIGHT**: Click **"Send"** in Wallet Studio to open the interactive Send Modal. Transfer tNIGHT to any Bech32m unshielded recipient with a live 4-stage execution stepper (*Prepare Recipe -> Keystore Sign -> ZK Prove & Finalize -> Network Broadcast*) and a complete receipt showing transaction hash, settlement time, and DUST gas cost.
-- **Sync Telemetry Monitor**: Click the sync indicator or monitor button to open the live dashboard tracking multi-state machine convergence (Unshielded, Shielded, DUST), indexing throughput, and real-time event feeds.
-- **Contract Manager**: Deploy a new instance of the contract or switch active contract addresses.
-
-### Compact Studio & Gemini 3.7 Flash AI Copilot (`/ide`)
-The in-browser IDE Studio features an integrated **Gemini 3.7 Flash** AI Copilot designed specifically for Zero-Knowledge smart contract development:
-1. **AI Streaming Backend Endpoint (`/api/ai/compact`)**:
-   - Powered by the official `@google/genai` SDK with model `gemini-3.7-flash`.
-   - Conditioned with deep Midnight domain knowledge: Compact type system, witness 2-tuple return conventions (`[PS, Value]`), ZK assertion constraints, and `@midnight-ntwrk/midnight-js-contracts` client patterns.
-   - Streams responses in real-time via `ReadableStream`.
-2. **Interactive AI Copilot Panel (`AiCopilotPanel`)**:
-   - **🛠️ Fix Compiler Error**: Consumes compiler stdout, stderr, and line diagnostics to immediately diagnose syntax or type errors and generate working fixes with automatic recompilation.
-   - **⚡ Generate Client SDK & Documentation**: Scaffolds both comprehensive Markdown SDK documentation (architecture, ledger schema, witness/privacy rules, circuit reference, quickstart walkthrough) and a production-grade, strongly typed TypeScript client adapter.
-   - **🧪 Generate Vitest Tests**: Auto-generates unit test suites with simulated constructor/circuit contexts and mock witness handlers.
-   - **🔒 Audit ZK & Privacy**: Scans circuits for private witness leakage, unconstrained variables, and state transition flaws.
-   - **1-Click "Apply to Editor"**: Directly inserts generated Compact contract code into Monaco Editor and auto-recompiles.
-   - **Save & Download**: Save generated TypeScript clients (`src/client/`), unit tests (`tests/contracts/`), and Markdown documentation (`docs/`) directly into your project workspace.
-   - **Flexible API Keys**: Uses `GEMINI_API_KEY` from `.env.local` or allows entering a key directly in the UI settings drawer (stored in browser `localStorage`).
-3. **Seamless IDE Studio Integration**:
-   - Dedicated **"✨ AI Copilot"** tab in the Studio inspector panel.
-   - Contextual **"Fix with Gemini 3.7 Flash"** shortcut buttons inside the **Console** tab when compilation errors occur.
-
-### Web CLI Mode
-Click the **"Web CLI"** tab in the top navigation bar to open the built-in terminal emulator. Available commands:
-- `help` — Show available commands
-- `store <message>` or `1` — Store a new message to the contract
-- `read` or `2` — Read current message from the blockchain
-- `status` or `3` — Check wallet address, tNIGHT balance, and DUST balance
-- `dust` or `4` — Register UTXOs for DUST generation
-- `deploy` or `5` — Deploy a new contract
-- `clear` — Clear the terminal screen
-
----
-
-## 🖥️ Running the Terminal CLI
-
-You can also interact with your contract directly from your shell without the browser:
-
-```bash
-# Run the interactive CLI
-npm run cli
-
-# Deploy a new contract from the terminal
-npm run deploy
-```
+### 4. Presentation & API Layer (`app/api/`, `components/`, `src/presentation/`)
+- **Thin API Controllers**: Next.js App Router route handlers (`app/api/**/route.ts`) act purely as HTTP transport adapters, parsing requests, delegating to application use cases resolved from `container`, and formatting JSON responses.
+- **UI Workbenches & Components**: Rich React components utilizing domain entities and context providers.
 
 ---
 
@@ -153,72 +79,65 @@ npm run deploy
 .
 ├── app/
 │   ├── api/
-│   │   ├── ai/compact/route.ts           # Gemini 3.7 Flash AI Copilot streaming endpoint
-│   │   ├── compiler/compile/route.ts     # In-browser Compact compiler & ZK artifact builder
-│   │   ├── compiler/test/route.ts        # In-memory Vitest circuit test execution API
-│   │   ├── contract/state/route.ts       # Query on-chain message state
-│   │   ├── contract/message/route.ts     # Submit ZK storeMessage transaction
-│   │   ├── contract/deploy/route.ts      # Deploy new contract
-│   │   ├── wallet/status/route.ts        # Stream address & balances
-│   │   ├── wallet/register-dust/route.ts # Register UTXOs for DUST
-│   │   ├── wallet/send/route.ts          # Send unshielded tNIGHT tokens
-│   │   └── system/status/route.ts        # Check Proof Server & Indexer health
-│   ├── globals.css                       # Dark Cyber/Midnight theme & glassmorphism styles
-│   ├── layout.tsx                        # Root layout with fonts and metadata
-│   ├── ide/page.tsx                      # Compact Web Studio & in-browser IDE with Monaco
-│   └── page.tsx                          # Main interactive dashboard page
+│   │   ├── ai/compact/route.ts                    # Gemini 3.7 Flash AI Copilot streaming endpoint
+│   │   ├── compiler/compile/route.ts              # In-browser Compact compiler & ZK artifact builder
+│   │   ├── compiler/test/route.ts                 # In-memory Vitest circuit test execution API
+│   │   ├── contract/state/route.ts                # Query on-chain message state
+│   │   ├── contract/message/route.ts              # Submit ZK storeMessage transaction
+│   │   ├── contract/deploy/route.ts               # Deploy new contract
+│   │   ├── contract/bulletin-board/showcase/route.ts # Bulletin Board clean architecture controller
+│   │   ├── wallet/status/route.ts                 # Stream address & balances
+│   │   ├── wallet/register-dust/route.ts          # Register UTXOs for DUST
+│   │   ├── wallet/send/route.ts                   # Send unshielded tNIGHT tokens
+│   │   └── system/status/route.ts                 # Check Proof Server & Indexer health
+│   ├── contracts/                                 # Smart contract registry & dynamic workbench routes
+│   │   ├── page.tsx                               # Smart Contract Registry catalog
+│   │   └── [address]/page.tsx                     # Dynamic contract execution workbench router
+│   ├── globals.css                                # Dark Cyber/Midnight theme & glassmorphism styles
+│   ├── layout.tsx                                 # Root layout with fonts and metadata
+│   ├── ide/page.tsx                               # Compact Web Studio & in-browser IDE with Monaco
+│   └── page.tsx                                   # Main interactive dashboard page
 ├── components/
-│   ├── AiCopilotPanel.tsx                # Gemini 3.7 Flash interactive Copilot & quick actions
-│   ├── Header.tsx                        # Navigation, network badges & health monitor
-│   ├── MessageBoard.tsx                  # On-chain message hero display & address switcher
-│   ├── MessagePublisher.tsx              # Zero-Knowledge transaction visualizer & form
-│   ├── WalletStudio.tsx                  # HD wallet seed manager & balance studio
-│   ├── SyncDashboardModal.tsx            # Real-time multi-state machine sync monitor & telemetry modal
-│   ├── ContractManager.tsx               # Contract deployment studio
-│   ├── WebTerminal.tsx                   # Interactive web CLI console emulator
-│   └── TransactionFeed.tsx               # Live session transaction history
+│   ├── BulletinBoardWorkbench.tsx                 # Interactive Bulletin Board ZK circuit workbench
+│   ├── AiCopilotPanel.tsx                         # Gemini 3.7 Flash interactive Copilot & quick actions
+│   ├── Header.tsx                                 # Navigation, network badges & health monitor
+│   ├── MessageBoard.tsx                           # On-chain message hero display & address switcher
+│   ├── MessagePublisher.tsx                       # Zero-Knowledge transaction visualizer & form
+│   ├── WalletStudio.tsx                           # HD wallet seed manager & balance studio
+│   ├── SyncDashboardModal.tsx                     # Real-time multi-state machine sync monitor & telemetry modal
+│   ├── ContractManager.tsx                        # Contract deployment studio
+│   ├── WebTerminal.tsx                            # Interactive web CLI console emulator
+│   └── TransactionFeed.tsx                        # Live session transaction history
 ├── contracts/
-│   ├── hello-world.compact               # Compact smart contract source code
-│   └── managed/hello-world/              # Compiled ZK circuits, keys, and JS runtime
+│   ├── hello-world.compact                        # Compact smart contract source code
+│   ├── bulletin-board.compact                     # Privacy-preserving Bulletin Board Compact contract
+│   └── managed/                                   # Compiled ZK circuits, keys, and JS runtime artifacts
 ├── src/
-│   ├── domain/                           # Enterprise domain models, errors & port interfaces
-│   │   ├── entities/                     # WalletSnapshot, ContractDeployment, TxReceipt
-│   │   ├── errors/                       # WalletNotSyncedError, InsufficientDustError
-│   │   └── ports/                        # IWalletGateway, IContractGateway, ISystemGateway
-│   ├── application/                      # Use Cases / Application Business Rules
-│   │   ├── dto/                          # Use case input/output contracts
-│   │   └── use-cases/                    # StoreMessage, DeployContract, SendTNight, RegisterDust
-│   ├── infrastructure/                   # Midnight SDK adapters, drivers & composition root
-│   │   ├── config/                       # Preprod endpoints, network & storage config
-│   │   │   ├── midnight.config.ts        # RPC, Indexer, and Proof Server URLs
-│   │   │   └── storage.config.ts         # Active storage driver (file vs redis-json)
-│   │   ├── midnight/                     # Wallet & Contract Midnight SDK adapters
-│   │   ├── persistence/                  # Dual persistence drivers (File & Redis Stack)
-│   │   │   ├── file-deployment.storage.ts
-│   │   │   ├── file-wallet-state.storage.ts
-│   │   │   ├── storage.factory.ts        # Storage service resolver factory
-│   │   │   └── redis/                    # Redis Stack (RedisJSON) adapters
-│   │   │       ├── redis-client.factory.ts
-│   │   │       ├── redis-deployment.storage.ts
-│   │   │       ├── redis-wallet-state.storage.ts
-│   │   │       └── redis-tx-history.storage.ts
-│   │   └── di/container.ts               # Dependency injection container & composition root
-│   ├── lib/
-│   │   ├── midnight-service.ts           # Backward-compatible service facade
-│   │   ├── file-private-state-provider.ts # File-based private state persistence
-│   │   └── file-transaction-history-storage.ts # File-based tx feed persistence
-│   ├── cli.ts                            # Terminal interactive CLI script
-│   ├── deploy.ts                         # Terminal contract deployment script
-│   ├── seed.ts                           # Offline wallet seed & key derivation tool
-│   └── migrate-to-redis.ts               # Migration tool: File storage -> RedisJSON
-├── redis/
-│   └── docker-compose.yml                # Redis Stack (RedisJSON & RedisInsight) container
-├── deployment.json                       # Active contract address & seed metadata
-├── docker-compose.yml                    # Midnight Proof Server container configuration
-├── troubleshooting-commands.md           # Comprehensive CLI diagnostics, API & GraphQL query guide
-├── next.config.mjs                       # Next.js server & WebAssembly configuration
-├── package.json                          # Dependencies and scripts
-└── tsconfig.json                         # TypeScript configuration
+│   ├── domain/                                    # Enterprise domain models, errors & port interfaces
+│   │   ├── entities/                              # Contract, Wallet, BulletinBoard, System entities
+│   │   ├── errors/                                # WalletNotSyncedError, InsufficientDustError
+│   │   └── ports/                                 # IWalletGateway, IContractGateway, IBulletinBoardGateway
+│   ├── application/                               # Use Cases / Application Business Rules
+│   │   ├── dto/                                   # Use case input/output contracts
+│   │   └── use-cases/                             # GetBulletinBoardState, RunShowcase, StoreMessage, etc.
+│   ├── infrastructure/                            # Midnight SDK adapters, drivers & composition root
+│   │   ├── config/                                # Preprod endpoints, network & storage config
+│   │   ├── midnight/                              # Midnight SDK & Simulation adapters
+│   │   ├── persistence/                           # Dual persistence drivers (File & Redis Stack)
+│   │   └── di/container.ts                        # Dependency injection container & composition root
+│   ├── client/                                    # Generated Midnight TypeScript Client SDKs
+│   │   ├── hello-world-sdk.ts
+│   │   └── bulletin-board-sdk.ts
+│   ├── lib/                                       # Shared persistence helpers
+│   ├── cli.ts                                     # Terminal interactive CLI script
+│   ├── deploy.ts                                  # Terminal contract deployment script
+│   └── seed.ts                                    # Offline wallet seed & key derivation tool
+├── tests/
+│   ├── contracts/                                 # Low-level Compact circuit unit tests
+│   └── application/                               # Clean Architecture Use Case unit tests
+├── deployment.json                                # Active contract address & seed metadata
+├── docker-compose.yml                             # Midnight Proof Server container configuration
+└── tsconfig.json                                  # TypeScript configuration
 ```
 
 ---

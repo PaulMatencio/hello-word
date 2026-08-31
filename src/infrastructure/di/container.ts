@@ -8,6 +8,8 @@ import { MidnightWalletAdapter } from '../midnight/midnight-wallet.adapter';
 import { MidnightContractAdapter } from '../midnight/midnight-contract.adapter';
 import { MidnightSystemAdapter } from '../midnight/midnight-system.adapter';
 
+import { MidnightBulletinBoardAdapter } from '../midnight/midnight-bulletin-board.adapter';
+
 import { GetWalletStatusUseCase } from '@/src/application/use-cases/get-wallet-status.usecase';
 import { RegisterDustUseCase } from '@/src/application/use-cases/register-dust.usecase';
 import { StoreMessageUseCase } from '@/src/application/use-cases/store-message.usecase';
@@ -16,6 +18,10 @@ import { GetContractStateUseCase } from '@/src/application/use-cases/get-contrac
 import { SendUnshieldedTNightUseCase } from '@/src/application/use-cases/send-unshielded-tnight.usecase';
 import { GetSystemHealthUseCase } from '@/src/application/use-cases/get-system-health.usecase';
 import { DeriveKeysUseCase } from '@/src/application/use-cases/derive-keys.usecase';
+import { GetBulletinBoardStateUseCase } from '@/src/application/use-cases/get-bulletin-board-state.usecase';
+import { ResetBulletinBoardStateUseCase } from '@/src/application/use-cases/reset-bulletin-board-state.usecase';
+import { RunBulletinBoardShowcaseUseCase } from '@/src/application/use-cases/run-bulletin-board-showcase.usecase';
+import { ExecuteBulletinBoardCircuitUseCase } from '@/src/application/use-cases/execute-bulletin-board-circuit.usecase';
 
 const storage = createStorageServices();
 
@@ -30,6 +36,7 @@ class Container {
     public readonly walletGateway = new MidnightWalletAdapter(this.txHistoryStorage as any, this.walletStateStorage);
     public readonly contractGateway = new MidnightContractAdapter(this.walletGateway, this.deploymentStorage, this.txHistoryStorage as any);
     public readonly systemGateway = new MidnightSystemAdapter(this.deploymentStorage);
+    public readonly bulletinBoardGateway = new MidnightBulletinBoardAdapter();
 
     // Use Cases
     public readonly getWalletStatusUseCase = new GetWalletStatusUseCase(this.walletGateway);
@@ -40,6 +47,12 @@ class Container {
     public readonly sendUnshieldedTNightUseCase = new SendUnshieldedTNightUseCase(this.walletGateway);
     public readonly getSystemHealthUseCase = new GetSystemHealthUseCase(this.systemGateway);
     public readonly deriveKeysUseCase = new DeriveKeysUseCase(this.walletGateway);
+
+    // Bulletin Board Use Cases
+    public readonly getBulletinBoardStateUseCase = new GetBulletinBoardStateUseCase(this.bulletinBoardGateway);
+    public readonly resetBulletinBoardStateUseCase = new ResetBulletinBoardStateUseCase(this.bulletinBoardGateway);
+    public readonly runBulletinBoardShowcaseUseCase = new RunBulletinBoardShowcaseUseCase(this.bulletinBoardGateway);
+    public readonly executeBulletinBoardCircuitUseCase = new ExecuteBulletinBoardCircuitUseCase(this.bulletinBoardGateway);
 }
 
 // Export singleton instance
