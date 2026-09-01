@@ -1,0 +1,115 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// Struct representing the investor's private identity data
+struct InvestorData {
+    investorSecret: Bytes<32>,
+    investorId: Bytes<32>,
+}
+
+// Struct representing the signed / issued solvency certificate
+struct SolvencyAttestation {
+    auditor: Bytes<32>,
+    investorCommitment: Bytes<32>,
+    netWorth: Uint<64>,
+    expiry: Uint<64>,
+    attestationSalt: Bytes<32>,
+}
+
+// Preimage used to compute the anonymous nullifier for a specific verification campaign
+struct NullifierPreimage {
+    investorSecret: Bytes<32>,
+    campaignId: Bytes<32>,
+}
+
+// Public on-chain ledger state
+export ledger authority: Bytes<32>;
+export ledger minSolvencyThreshold: Uint<64>;
+export ledger registeredAuditors: Map<Bytes<32>, Boolean>;
+export ledger usedNullifiers: Set<Bytes<32>>;
+export ledger totalVerifications: Counter;
+
+// Private off-chain witnesses
+witness getInvestorData(): InvestorData;
+witness getAttestation(): SolvencyAttestation;
+
+// Contract Constructor
+constructor(admin: Bytes<32>, initialThreshold: Uint<64>) {
+    authority = disclose(admin);
+    minSolvencyThreshold = disclose(initialThreshold);
+}
+
+// Register a certified auditor authorized to issue solvency attestations
+export circuit registerAuditor(auditor: Bytes<32>): [] {
+    // Note: In production, verify caller identity or signature against authority
+    registeredAuditors.insert(disclose(auditor), true);
+}
+
+// Revoke an auditor's authorization
+export circuit revokeAuditor(auditor: Bytes<32>): [] {
+    registeredAuditors.insert(disclose(auditor), false);
+}
+
+// Update the minimum solvency threshold
+export circuit updateThreshold(newThreshold: Uint<64>): [] {
+    minSolvencyThreshold = disclose(newThreshold);
+}
+
+// Zero-knowledge circuit to prove accreditation and solvency without revealing balance or identity
+export circuit proveSolvencyAndAccreditation(
+    campaignId: Bytes<32>,
+    currentTimestamp: Uint<64>
+): Bytes<32> {
+    // 1. Retrieve private witnesses
+    const investor = getInvestorData();
+    const attestation = getAttestation();
+
+    // 2. Verify that the attestation corresponds to the investor's identity commitment
+    const computedInvestorCommitment = persistentHash<InvestorData>(investor);
+    assert(
+        computedInvestorCommitment == attestation.investorCommitment,
+        "Attestation commitment does not match investor identity"
+    );
+
+    // 3. Verify that the auditor is authorized (disclosing the auditor identity to query ledger)
+    const disclosedAuditor = disclose(attestation.auditor);
+    const isAuditorRegistered = registeredAuditors.member(disclosedAuditor);
+    assert(isAuditorRegistered, "Attestation auditor is not registered");
+    assert(
+        registeredAuditors.lookup(disclosedAuditor),
+        "Attestation auditor is revoked or inactive"
+    );
+
+    // 4. Verify that the attestation has not expired
+    assert(
+        attestation.expiry >= currentTimestamp,
+        "Solvency attestation has expired"
+    );
+
+    // 5. Verify the solvency threshold constraint
+    assert(
+        attestation.netWorth >= minSolvencyThreshold,
+        "Investor does not meet the minimum solvency threshold"
+    );
+
+    // 6. Compute campaign-specific nullifier to prevent replay
+    const nullifierPreimage = NullifierPreimage {
+        investorSecret: investor.investorSecret,
+        campaignId: campaignId,
+    };
+    const nullifier = persistentHash<NullifierPreimage>(nullifierPreimage);
+    const disclosedNullifier = disclose(nullifier);
+
+    // 7. Verify nullifier uniqueness and record it
+    assert(
+        !usedNullifiers.member(disclosedNullifier),
+        "Nullifier already used for this campaign"
+    );
+    usedNullifiers.insert(disclosedNullifier);
+
+    // 8. Update verification metrics
+    totalVerifications.increment(1);
+
+    return disclosedNullifier;
+}

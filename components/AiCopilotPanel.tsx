@@ -24,6 +24,7 @@ import {
     ExternalLink,
     Save,
     Download,
+    Play,
 } from 'lucide-react';
 import { useToast } from '@/src/presentation/context/ToastContext';
 
@@ -43,6 +44,8 @@ interface AiCopilotPanelProps {
     testResult: any;
     onApplyCodeToEditor: (code: string) => void;
     onSwitchTab?: (tab: string) => void;
+    onRunTests?: () => void;
+    isRunningTests?: boolean;
 }
 
 export function AiCopilotPanel({
@@ -52,6 +55,8 @@ export function AiCopilotPanel({
     testResult,
     onApplyCodeToEditor,
     onSwitchTab,
+    onRunTests,
+    isRunningTests = false,
 }: AiCopilotPanelProps) {
     const toast = useToast();
     const [isMounted, setIsMounted] = useState<boolean>(false);
@@ -404,7 +409,31 @@ Ask a question below or click one of the quick actions to get started!`,
             };
         }
 
-        // 5. Production TypeScript Client SDK (Full Class Adapter) - Must be checked BEFORE pure types
+        // 5. API Reference Outline / Signature Only (e.g. class outline without implementation or imports)
+        const isOutlineOnly =
+            (trimmed.startsWith('class ') || trimmed.includes('class ')) &&
+            trimmed.includes('constructor(') &&
+            !trimmed.includes('import ') &&
+            !trimmed.includes('export class ') &&
+            (trimmed.includes('): ConstructorResult') || trimmed.includes('): CircuitResults'));
+
+        if (isOutlineOnly) {
+            return {
+                folder: 'docs',
+                filename: `${baseName}-api.d.ts`,
+                typeLabel: 'API Reference Outline',
+                icon: 'ts',
+                badgeColor: 'text-indigo-300 bg-indigo-500/20 border-indigo-500/30',
+                isCompact: false,
+                isTsSdk: false,
+                isExample: false,
+                isTest: false,
+                isDoc: false,
+                isShell: false,
+            };
+        }
+
+        // 6. Production TypeScript Client SDK (Full Class Adapter) - Must be checked BEFORE pure types
         if (
             (trimmed.includes('class ') || trimmed.includes('export class ') || trimmed.includes('constructor(')) &&
             !trimmed.includes('describe(') &&
@@ -523,12 +552,23 @@ Ask a question below or click one of the quick actions to get started!`,
 
     // Save code snippet directly to workspace (with intelligent path suggestion)
     const handleSaveSnippetToFile = async (code: string, language: string) => {
+        if (isStreaming) {
+            toast.error('Generation in Progress', 'Please wait for Gemini to finish generating before saving the file.');
+            return;
+        }
+
+        if (!code || code.trim().length < 10) {
+            toast.error('Invalid Code', 'The code snippet is empty or incomplete.');
+            return;
+        }
+
         const meta = detectFileMeta(code, language, filename);
 
         const targetPath = prompt(`Enter workspace path to save this file:`, `${meta.folder}/${meta.filename}`);
         if (!targetPath) return;
 
-        const parts = targetPath.trim().split('/');
+        const cleanPath = targetPath.trim().replace(/\\/g, '/');
+        const parts = cleanPath.split('/').filter(Boolean);
         const saveName = parts.pop() || meta.filename;
         const saveFolder = parts.join('/') || '.';
 
@@ -631,11 +671,31 @@ Ask a question below or click one of the quick actions to get started!`,
     const renderMessageContent = (content: string, msgId: string, role: string = 'assistant') => {
         const blocks = extractCodeBlocks(content);
 
-        // Find key deliverables by their robust classifier
-        const tsSdkBlock = blocks.find((b) => detectFileMeta(b.code, b.language, filename).isTsSdk);
-        const exampleBlock = blocks.find((b) => detectFileMeta(b.code, b.language, filename).isExample);
-        const testBlock = blocks.find((b) => detectFileMeta(b.code, b.language, filename).isTest);
-        const isSdkResponse = role === 'assistant' && (content.includes('SDK Documentation') || content.includes('TypeScript Client SDK') || tsSdkBlock !== undefined);
+        // Find key deliverables by selecting the complete, production file (with imports) or largest matching block
+        const tsSdkBlocks = blocks.filter((b) => {
+            const meta = detectFileMeta(b.code, b.language, filename);
+            return meta.isTsSdk;
+        });
+        const tsSdkBlock =
+            tsSdkBlocks.find((b) => b.code.includes('import ') && b.code.includes('export class ')) ||
+            tsSdkBlocks.find((b) => b.code.includes('import ')) ||
+            [...tsSdkBlocks].sort((a, b) => b.code.length - a.code.length)[0];
+
+        const exampleBlocks = blocks.filter((b) => detectFileMeta(b.code, b.language, filename).isExample);
+        const exampleBlock =
+            exampleBlocks.find((b) => b.code.includes('import ')) ||
+            [...exampleBlocks].sort((a, b) => b.code.length - a.code.length)[0];
+
+        const testBlocks = blocks.filter((b) => detectFileMeta(b.code, b.language, filename).isTest);
+        const testBlock =
+            testBlocks.find((b) => b.code.includes('describe(') && b.code.includes('it(')) ||
+            [...testBlocks].sort((a, b) => b.code.length - a.code.length)[0];
+
+        const isSdkResponse =
+            role === 'assistant' &&
+            (content.includes('SDK Documentation') ||
+                content.includes('TypeScript Client SDK') ||
+                tsSdkBlock !== undefined);
 
         if (blocks.length === 0) {
             return (
@@ -667,7 +727,8 @@ Ask a question below or click one of the quick actions to get started!`,
                             {/* 1. Full Documentation Actions */}
                             <button
                                 onClick={() => handleSaveFullDocToFile(content)}
-                                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-purple-600/30 text-purple-200 hover:bg-purple-600 hover:text-white text-[11px] font-bold border border-purple-500/40 transition-all cursor-pointer shadow-md"
+                                disabled={isStreaming}
+                                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-purple-600/30 text-purple-200 hover:bg-purple-600 hover:text-white text-[11px] font-bold border border-purple-500/40 transition-all cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                                 title="Save full documentation to docs/"
                             >
                                 <FileCode2 className="h-3.5 w-3.5 text-purple-300" />
@@ -676,7 +737,8 @@ Ask a question below or click one of the quick actions to get started!`,
 
                             <button
                                 onClick={() => handleDownloadFullDoc(content)}
-                                className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-midnight-900 text-slate-300 hover:text-white text-[11px] border border-white/15 transition-all cursor-pointer"
+                                disabled={isStreaming}
+                                className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-midnight-900 text-slate-300 hover:text-white text-[11px] border border-white/15 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                 title="Download complete SDK documentation markdown file"
                             >
                                 <Download className="h-3.5 w-3.5 text-slate-400" />
@@ -688,7 +750,8 @@ Ask a question below or click one of the quick actions to get started!`,
                                 <>
                                     <button
                                         onClick={() => handleSaveSnippetToFile(tsSdkBlock.code, tsSdkBlock.language)}
-                                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-cyan-600/30 text-cyan-200 hover:bg-cyan-600 hover:text-white text-[11px] font-bold border border-cyan-500/40 transition-all cursor-pointer shadow-md"
+                                        disabled={isStreaming}
+                                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-cyan-600/30 text-cyan-200 hover:bg-cyan-600 hover:text-white text-[11px] font-bold border border-cyan-500/40 transition-all cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                                         title="Save TypeScript client adapter to src/client/"
                                     >
                                         <Zap className="h-3.5 w-3.5 text-cyan-300" />
@@ -697,7 +760,8 @@ Ask a question below or click one of the quick actions to get started!`,
 
                                     <button
                                         onClick={() => handleDownloadSnippet(tsSdkBlock.code, tsSdkBlock.language)}
-                                        className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-midnight-900 text-slate-300 hover:text-white text-[11px] border border-white/15 transition-all cursor-pointer"
+                                        disabled={isStreaming}
+                                        className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl bg-midnight-900 text-slate-300 hover:text-white text-[11px] border border-white/15 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                         title="Download TypeScript client file"
                                     >
                                         <Download className="h-3.5 w-3.5 text-cyan-400" />
@@ -710,7 +774,8 @@ Ask a question below or click one of the quick actions to get started!`,
                             {exampleBlock && (
                                 <button
                                     onClick={() => handleSaveSnippetToFile(exampleBlock.code, exampleBlock.language)}
-                                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-blue-600/30 text-blue-200 hover:bg-blue-600 hover:text-white text-[11px] font-bold border border-blue-500/40 transition-all cursor-pointer shadow-md"
+                                    disabled={isStreaming}
+                                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-blue-600/30 text-blue-200 hover:bg-blue-600 hover:text-white text-[11px] font-bold border border-blue-500/40 transition-all cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="Save runnable example script to examples/"
                                 >
                                     <FileCode2 className="h-3.5 w-3.5 text-blue-300" />
@@ -722,7 +787,8 @@ Ask a question below or click one of the quick actions to get started!`,
                             {testBlock && (
                                 <button
                                     onClick={() => handleSaveSnippetToFile(testBlock.code, testBlock.language)}
-                                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/30 text-emerald-200 hover:bg-emerald-600 hover:text-white text-[11px] font-bold border border-emerald-500/40 transition-all cursor-pointer shadow-md"
+                                    disabled={isStreaming}
+                                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-600/30 text-emerald-200 hover:bg-emerald-600 hover:text-white text-[11px] font-bold border border-emerald-500/40 transition-all cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="Save unit tests to tests/contracts/"
                                 >
                                     <FlaskConical className="h-3.5 w-3.5 text-emerald-300" />
@@ -766,7 +832,8 @@ Ask a question below or click one of the quick actions to get started!`,
                                                             'Contract code updated in Monaco Editor.'
                                                         );
                                                     }}
-                                                    className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-indigo-600/40 text-indigo-200 hover:bg-indigo-600 text-[10px] font-semibold border border-indigo-500/40 transition-colors cursor-pointer"
+                                                    disabled={isStreaming}
+                                                    className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-indigo-600/40 text-indigo-200 hover:bg-indigo-600 text-[10px] font-semibold border border-indigo-500/40 transition-colors cursor-pointer disabled:opacity-50"
                                                     title="Replace current Monaco Editor code with this snippet"
                                                 >
                                                     <ArrowDownToLine className="h-3 w-3" />
@@ -779,7 +846,8 @@ Ask a question below or click one of the quick actions to get started!`,
                                                 onClick={() =>
                                                     handleSaveSnippetToFile(block.code, block.language)
                                                 }
-                                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-200 hover:bg-emerald-600 hover:text-white text-[10px] font-semibold border border-emerald-500/40 transition-colors cursor-pointer"
+                                                disabled={isStreaming}
+                                                className="inline-flex items-center space-x-1 px-2 py-0.5 rounded bg-emerald-600/30 text-emerald-200 hover:bg-emerald-600 hover:text-white text-[10px] font-semibold border border-emerald-500/40 transition-colors cursor-pointer disabled:opacity-50"
                                                 title={`Save to workspace as ${meta.folder}/${meta.filename}`}
                                             >
                                                 <Save className="h-3 w-3 text-emerald-400" />
@@ -954,10 +1022,31 @@ Ask a question below or click one of the quick actions to get started!`,
                 <button
                     onClick={() => handleSendAction('generate_tests')}
                     disabled={isStreaming}
-                    className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-medium hover:bg-emerald-600/30 hover:text-white transition-colors"
+                    className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-medium hover:bg-emerald-600/30 hover:text-white transition-colors cursor-pointer"
+                    title="Generate Vitest unit tests for this contract"
                 >
                     <FlaskConical className="h-3 w-3 text-emerald-400" />
                     <span>Generate Tests</span>
+                </button>
+
+                <button
+                    onClick={() => {
+                        if (onRunTests) {
+                            onRunTests();
+                        } else if (onSwitchTab) {
+                            onSwitchTab('tests');
+                        }
+                    }}
+                    disabled={isRunningTests || isStreaming}
+                    className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 text-[11px] font-semibold hover:bg-emerald-500/30 hover:text-white transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Run Vitest circuit unit tests (Ctrl+T)"
+                >
+                    {isRunningTests ? (
+                        <RefreshCw className="h-3 w-3 animate-spin text-emerald-400" />
+                    ) : (
+                        <Play className="h-3 w-3 text-emerald-400 fill-current" />
+                    )}
+                    <span>{isRunningTests ? 'Running Tests...' : 'Run Tests'}</span>
                 </button>
 
                 <button

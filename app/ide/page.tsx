@@ -30,6 +30,11 @@ import {
     Upload,
     X,
     FlaskConical,
+    Undo2,
+    Redo2,
+    Plus,
+    ShieldCheck,
+    Scale,
 } from 'lucide-react';
 import type { OnMount } from '@monaco-editor/react';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
@@ -42,11 +47,13 @@ import {
 } from '@/src/infrastructure/ide/compact-monarch';
 import { COMPACT_TEMPLATES, CompactTemplate } from '@/src/infrastructure/ide/compact-templates';
 import { AiCopilotPanel } from '@/components/AiCopilotPanel';
+import { FormalVerificationPanel } from '@/components/FormalVerificationPanel';
+import type { FormalVerificationReport } from '@/app/api/compiler/verify/route';
 
 // Dynamically import Monaco to prevent SSR issues
 const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
-type OutputTab = 'console' | 'dts' | 'circuits' | 'js' | 'tests' | 'ai';
+type OutputTab = 'console' | 'dts' | 'circuits' | 'js' | 'tests' | 'verify' | 'ai';
 
 interface WorkspaceFile {
     name: string;
@@ -84,6 +91,10 @@ export default function CompactIdePage() {
     // Test runner state
     const [isRunningTests, setIsRunningTests] = useState<boolean>(false);
     const [testResult, setTestResult] = useState<any>(null);
+
+    // Formal Verification state
+    const [isVerifying, setIsVerifying] = useState<boolean>(false);
+    const [verificationReport, setVerificationReport] = useState<FormalVerificationReport | null>(null);
 
     // Export / Save As Modal State
     const [isSaveAsModalOpen, setIsSaveAsModalOpen] = useState<boolean>(false);
@@ -236,7 +247,19 @@ export default function CompactIdePage() {
             // Ignore
         }
         if (editorRef.current) {
-            editorRef.current.setValue(newCode);
+            const model = editorRef.current.getModel();
+            if (model) {
+                editorRef.current.executeEdits('ai-copilot', [
+                    {
+                        range: model.getFullModelRange(),
+                        text: newCode,
+                        forceMoveMarkers: true,
+                    },
+                ]);
+                editorRef.current.pushUndoStop();
+            } else {
+                editorRef.current.setValue(newCode);
+            }
         }
         updateEditorMarkers([]);
         setCompilationResult(null);
@@ -353,6 +376,51 @@ export default function CompactIdePage() {
             }
         }
         toast.info('Template Loaded', tmpl.title);
+    };
+
+    // Open a fresh new Compact file initialized with pragma & CompactStandardLibrary
+    const handleNewCompactFile = () => {
+        const newCode = `pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+`;
+        const newFilename = 'my-contract.compact';
+        setFilename(newFilename);
+        setSaveAsFilename(newFilename);
+        setSourceCode(newCode);
+        setIsDirty(true);
+        setCompilationResult(null);
+        setSelectedTemplate({
+            id: 'blank',
+            title: 'Blank Contract',
+            description: 'Clean starter with language pragma and Compact standard library.',
+            filename: newFilename,
+            code: newCode,
+        });
+
+        if (editorRef.current) {
+            editorRef.current.setValue(newCode);
+            editorRef.current.focus();
+            // Move cursor to line 4
+            editorRef.current.setPosition({ lineNumber: 4, column: 1 });
+        }
+
+        if (monacoRef.current && editorRef.current) {
+            const model = editorRef.current.getModel();
+            if (model) {
+                monacoRef.current.editor.setModelMarkers(model, 'compact-compiler', []);
+            }
+        }
+
+        try {
+            localStorage.setItem('midnight_ide_source_code', newCode);
+            localStorage.setItem('midnight_ide_filename', newFilename);
+            localStorage.setItem('midnight_ide_is_dirty', 'true');
+        } catch {
+            // Ignore
+        }
+
+        toast.success('New Compact File Opened', 'Initialized with pragma >= 0.23 and CompactStandardLibrary');
     };
 
     // Fetch workspace files from contracts directory
@@ -549,6 +617,36 @@ export default function CompactIdePage() {
         }
     };
 
+    // Run Formal Verification (SMT-LIB2 / Z3 symbolic analysis)
+    const handleRunFormalVerification = async () => {
+        setIsVerifying(true);
+        setActiveTab('verify');
+        try {
+            const res = await fetch('/api/compiler/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    code: sourceCode,
+                    filename: filename,
+                }),
+            });
+            const data = await res.json();
+            if (data.success && data.data) {
+                setVerificationReport(data.data);
+                toast.success(
+                    'Formal Verification Complete',
+                    `${data.data.summary.proven} of ${data.data.summary.totalProperties} properties mathematically proven`
+                );
+            } else {
+                toast.error('Verification Failed', data.error || 'Could not verify contract');
+            }
+        } catch (err: any) {
+            toast.error('Verification Error', err.message);
+        } finally {
+            setIsVerifying(false);
+        }
+    };
+
     // Keep refs in sync for Monaco editor keybindings
     useEffect(() => {
         handleQuickSaveRef.current = handleQuickSave;
@@ -560,6 +658,24 @@ export default function CompactIdePage() {
         if (editorRef.current) {
             editorRef.current.getAction('editor.action.formatDocument')?.run();
             toast.info('Formatted', 'Code formatted');
+        }
+    };
+
+    // Undo action for Monaco Editor
+    const handleUndo = () => {
+        if (editorRef.current) {
+            editorRef.current.focus();
+            editorRef.current.trigger('toolbar', 'undo', null);
+            toast.info('Undo', 'Reverted last edit');
+        }
+    };
+
+    // Redo action for Monaco Editor
+    const handleRedo = () => {
+        if (editorRef.current) {
+            editorRef.current.focus();
+            editorRef.current.trigger('toolbar', 'redo', null);
+            toast.info('Redo', 'Restored next edit');
         }
     };
 
@@ -716,6 +832,16 @@ export default function CompactIdePage() {
                         className="hidden"
                     />
 
+                    {/* New Contract Button */}
+                    <button
+                        onClick={handleNewCompactFile}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 px-3 py-2 text-xs font-semibold text-slate-300 border border-white/10 hover:bg-midnight-800 hover:text-white transition-colors cursor-pointer shadow-sm"
+                        title="Create a new Compact contract (initialized with pragma >= 0.23 & CompactStandardLibrary)"
+                    >
+                        <FilePlus className="h-3.5 w-3.5 text-cyan-400" />
+                        <span>New File</span>
+                    </button>
+
                     {/* Open Contract Button */}
                     <button
                         onClick={openLoadModal}
@@ -752,9 +878,29 @@ export default function CompactIdePage() {
                         <span>Save As...</span>
                     </button>
 
+                    {/* Undo / Redo Toolbar Controls */}
+                    <div className="flex items-center space-x-1 bg-midnight-900 rounded-xl p-1 border border-white/10">
+                        <button
+                            onClick={handleUndo}
+                            className="inline-flex items-center space-x-1 px-2.5 py-1 text-xs font-semibold text-slate-300 hover:text-white hover:bg-midnight-800 rounded-lg transition-colors cursor-pointer"
+                            title="Undo changes (Ctrl+Z / ⌘Z)"
+                        >
+                            <Undo2 className="h-3.5 w-3.5 text-indigo-400" />
+                            <span className="hidden sm:inline">Undo</span>
+                        </button>
+                        <button
+                            onClick={handleRedo}
+                            className="inline-flex items-center space-x-1 px-2.5 py-1 text-xs font-semibold text-slate-300 hover:text-white hover:bg-midnight-800 rounded-lg transition-colors cursor-pointer"
+                            title="Redo changes (Ctrl+Y / ⌘⇧Z)"
+                        >
+                            <Redo2 className="h-3.5 w-3.5 text-indigo-400" />
+                            <span className="hidden sm:inline">Redo</span>
+                        </button>
+                    </div>
+
                     <button
                         onClick={handleFormat}
-                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 px-3 py-2 text-xs font-semibold text-slate-300 border border-white/10 hover:bg-midnight-800 transition-colors"
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 px-3 py-2 text-xs font-semibold text-slate-300 border border-white/10 hover:bg-midnight-800 transition-colors cursor-pointer"
                         title="Format Compact code"
                     >
                         <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
@@ -826,6 +972,26 @@ export default function CompactIdePage() {
                         )}
                     </button>
 
+                    {/* Formal Verification Button (SMT / Z3) */}
+                    <button
+                        onClick={handleRunFormalVerification}
+                        disabled={isVerifying || isCompiling}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 px-3.5 py-2 text-xs font-bold shadow-lg shadow-cyan-950/30 hover:bg-cyan-600/40 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                        title="Formally verify ZK constraints & ledger invariants (SMT/Z3)"
+                    >
+                        {isVerifying ? (
+                            <>
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin text-cyan-400" />
+                                <span>Verifying...</span>
+                            </>
+                        ) : (
+                            <>
+                                <ShieldCheck className="h-3.5 w-3.5 text-cyan-400" />
+                                <span>Verify (FV)</span>
+                            </>
+                        )}
+                    </button>
+
                     {/* Highly Visible AI Copilot Button */}
                     <button
                         onClick={() => setActiveTab('ai')}
@@ -874,6 +1040,15 @@ export default function CompactIdePage() {
                             {tmpl.title}
                         </button>
                     ))}
+
+                    <button
+                        onClick={handleNewCompactFile}
+                        className="inline-flex items-center space-x-1 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all bg-indigo-600/20 text-cyan-300 hover:text-white border border-indigo-500/40 hover:bg-indigo-600/30 cursor-pointer shadow-sm ml-1"
+                        title="Open a fresh new Compact file with pragma >= 0.23 and CompactStandardLibrary"
+                    >
+                        <Plus className="h-3.5 w-3.5 text-cyan-400" />
+                        <span>New Contract</span>
+                    </button>
                 </div>
 
                 <div className="flex items-center space-x-2">
@@ -928,7 +1103,24 @@ export default function CompactIdePage() {
                                 Compact
                             </span>
                         </div>
-                        <div className="flex items-center space-x-3">
+                        <div className="flex items-center space-x-2">
+                            {/* Editor Tab Quick Undo / Redo */}
+                            <div className="flex items-center space-x-0.5 bg-midnight-950/80 rounded-lg p-0.5 border border-white/10 mr-1">
+                                <button
+                                    onClick={handleUndo}
+                                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                                    title="Undo (Ctrl+Z / ⌘Z)"
+                                >
+                                    <Undo2 className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                    onClick={handleRedo}
+                                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                                    title="Redo (Ctrl+Y / ⌘⇧Z)"
+                                >
+                                    <Redo2 className="h-3.5 w-3.5" />
+                                </button>
+                            </div>
                             <button
                                 onClick={() => setActiveTab('ai')}
                                 className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-lg bg-gradient-to-r from-purple-600/30 to-indigo-600/30 text-indigo-200 hover:from-purple-600 hover:to-indigo-600 hover:text-white border border-indigo-500/40 text-[11px] font-semibold transition-all shadow-sm"
@@ -1070,6 +1262,23 @@ export default function CompactIdePage() {
                                             : 'bg-rose-500 text-white'
                                     }`}>
                                         {testResult.failedTests === 0 ? '✓' : testResult.failedTests}
+                                    </span>
+                                )}
+                            </button>
+
+                            <button
+                                onClick={() => setActiveTab('verify')}
+                                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                                    activeTab === 'verify'
+                                        ? 'bg-cyan-600 text-white shadow'
+                                        : 'text-slate-400 hover:text-white'
+                                }`}
+                            >
+                                <ShieldCheck className="h-3.5 w-3.5 text-cyan-300" />
+                                <span>Verification</span>
+                                {verificationReport && (
+                                    <span className="ml-1 flex h-4 px-1 items-center justify-center rounded-full text-[10px] font-bold bg-cyan-400/30 text-cyan-200">
+                                        ✓
                                     </span>
                                 )}
                             </button>
@@ -1440,7 +1649,20 @@ export default function CompactIdePage() {
                             </div>
                         )}
 
-                        {/* Tab 6: AI Copilot */}
+                        {/* Tab 6: Formal Verification (SMT / Z3) */}
+                        {activeTab === 'verify' && (
+                            <div className="h-full -m-4">
+                                <FormalVerificationPanel
+                                    sourceCode={sourceCode}
+                                    filename={filename}
+                                    isVerifying={isVerifying}
+                                    onRunVerification={handleRunFormalVerification}
+                                    report={verificationReport}
+                                />
+                            </div>
+                        )}
+
+                        {/* Tab 7: AI Copilot */}
                         {activeTab === 'ai' && (
                             <div className="h-full -m-4">
                                 <AiCopilotPanel
@@ -1450,6 +1672,8 @@ export default function CompactIdePage() {
                                     testResult={testResult}
                                     onApplyCodeToEditor={handleApplyAiCode}
                                     onSwitchTab={(tab) => setActiveTab(tab as OutputTab)}
+                                    onRunTests={handleRunTests}
+                                    isRunningTests={isRunningTests}
                                 />
                             </div>
                         )}

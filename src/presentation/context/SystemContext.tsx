@@ -22,6 +22,8 @@ interface SystemContextType {
     fetchSystemHealth: () => Promise<void>;
     isSyncDashboardOpen: boolean;
     setIsSyncDashboardOpen: (open: boolean) => void;
+    isSettingsOpen: boolean;
+    setIsSettingsOpen: (open: boolean) => void;
     activeContractAddress: string;
     setActiveContractAddress: (address: string) => void;
 }
@@ -32,12 +34,16 @@ export const SystemProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
     const [isLoadingHealth, setIsLoadingHealth] = useState<boolean>(true);
     const [isSyncDashboardOpen, setIsSyncDashboardOpen] = useState<boolean>(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
     const [activeContractAddress, setActiveContractAddress] = useState<string>('');
 
     const fetchSystemHealth = useCallback(async () => {
         try {
             const res = await fetch('/api/system/status');
-            const data = await res.json();
+            if (!res.ok) return;
+            const text = await res.text();
+            if (!text.trim()) return;
+            const data = JSON.parse(text);
             if (data.success && data.data) {
                 setSystemHealth(data.data);
                 if (data.data.deployment?.contractAddress && !activeContractAddress) {
@@ -45,7 +51,7 @@ export const SystemProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 }
             }
         } catch (err) {
-            console.error('Failed to fetch system health:', err);
+            // Silently ignore transient errors
         } finally {
             setIsLoadingHealth(false);
         }
@@ -65,6 +71,8 @@ export const SystemProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 fetchSystemHealth,
                 isSyncDashboardOpen,
                 setIsSyncDashboardOpen,
+                isSettingsOpen,
+                setIsSettingsOpen,
                 activeContractAddress,
                 setActiveContractAddress,
             }}

@@ -35,12 +35,16 @@ export circuit storeMessage(newMessage: Opaque<"string">): [] {
 import CompactStandardLibrary;
 
 // On-chain counter tracking numeric invocations
-export ledger count: Cell<Uint<32>>;
+export ledger count: Uint<32>;
+
+constructor() {
+  count = 0;
+}
 
 // Circuit to increment the counter
 export circuit increment(by: Uint<32>): [] {
-  assert by > 0 "Increment step must be greater than zero";
-  count = count + by;
+  assert(by > 0, "Increment step must be greater than zero");
+  count = (count + disclose(by)) as Uint<32>;
 }
 
 // Circuit to reset counter
@@ -59,16 +63,27 @@ export circuit reset(): [] {
 import CompactStandardLibrary;
 
 // Public ledger state tracking verification status
-export ledger verified: Cell<Boolean>;
-export ledger commitHash: Cell<Bytes<32>>;
+export ledger verified: Boolean;
+export ledger commitHash: Bytes<32>;
 
 // Witness providing private preimage knowledge
 witness secretPreimage(): Bytes<32>;
 
-// ZK Circuit validating the witness against the commit hash
+constructor(initialHash: Bytes<32>) {
+  verified = false;
+  commitHash = disclose(initialHash);
+}
+
+// Set commitment hash
+export circuit setCommitHash(newHash: Bytes<32>): [] {
+  commitHash = disclose(newHash);
+  verified = false;
+}
+
+// ZK Circuit validating the private witness preimage against the commitment hash
 export circuit verifySecret(): [] {
   const secret = secretPreimage();
-  assert sha256(secret) == commitHash "Secret does not match committed hash";
+  assert(persistentHash<Bytes<32>>(secret) == commitHash, "Secret does not match committed hash");
   verified = true;
 }
 `,
@@ -76,19 +91,11 @@ export circuit verifySecret(): [] {
     {
         id: 'blank',
         title: 'Blank Contract',
-        description: 'Minimal starter template for creating your own Compact circuit.',
+        description: 'Clean starter with language pragma and Compact standard library.',
         filename: 'my-contract.compact',
         code: `pragma language_version >= 0.23;
 
 import CompactStandardLibrary;
-
-// Define your ledger state here
-export ledger state: Cell<Uint<32>>;
-
-// Define your ZK circuits here
-export circuit run(): [] {
-  state = state + 1;
-}
 `,
     },
 ];

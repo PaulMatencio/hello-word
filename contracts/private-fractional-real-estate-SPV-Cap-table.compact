@@ -1,0 +1,188 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// Data structure representing a private shareholding position in the SPV
+export struct ShareHolding {
+    ownerPk: Bytes<32>,
+    amount: Uint<64>,
+    salt: Bytes<32>,
+}
+
+// Data structure for generating unique, irreversible nullifiers
+export struct NullifierData {
+    commitment: Bytes<32>,
+    secretKey: Bytes<32>,
+}
+
+// Data structure representing transfer results
+export struct TransferOutput {
+    recipientCommitment: Bytes<32>,
+    changeCommitment: Bytes<32>,
+}
+
+// Public ledger state stored on-chain
+export ledger manager: Bytes<32>;
+export ledger propertyId: Bytes<32>;
+export ledger totalAuthorizedShares: Uint<64>;
+export ledger totalIssuedShares: Uint<64>;
+export ledger commitments: Set<Bytes<32>>;
+export ledger nullifiers: Set<Bytes<32>>;
+
+// Private witness lookups
+witness getSenderSecretKey(): Bytes<32>;
+witness getShareHoldingSalt(): Bytes<32>;
+
+// Constructor to initialize the Real Estate SPV
+constructor(
+    initialManager: Bytes<32>,
+    initialPropertyId: Bytes<32>,
+    authorizedShares: Uint<64>
+) {
+    manager = disclose(initialManager);
+    propertyId = disclose(initialPropertyId);
+    totalAuthorizedShares = disclose(authorizedShares);
+    totalIssuedShares = 0;
+}
+
+/**
+ * @notice Issues private fractional shares to an investor. Only the SPV manager can issue shares.
+ * @param managerSk Secret key of the SPV manager for authorization.
+ * @param investorPk Public key / address identifier of the recipient investor.
+ * @param amount Number of shares to allocate.
+ * @param salt Random salt used to bind and anonymize the holding commitment.
+ * @return The resulting on-chain commitment hash.
+ */
+export circuit issueShares(
+    managerSk: Bytes<32>,
+    investorPk: Bytes<32>,
+    amount: Uint<64>,
+    salt: Bytes<32>
+): Bytes<32> {
+    // 1. Authenticate manager
+    const derivedManagerPk = persistentHash<Bytes<32>>(managerSk);
+    assert(disclose(derivedManagerPk) == manager, "Unauthorized: Only the SPV manager can issue shares");
+
+    // 2. Validate authorized limit
+    const newTotalIssued = (totalIssuedShares + disclose(amount)) as Uint<64>;
+    assert(newTotalIssued <= totalAuthorizedShares, "Exceeds total authorized SPV shares");
+
+    // 3. Construct share commitment
+    const holding = ShareHolding {
+        ownerPk: investorPk,
+        amount: amount,
+        salt: salt,
+    };
+    const commitment = persistentHash<ShareHolding>(holding);
+
+    // 4. Update ledger state
+    commitments.insert(disclose(commitment));
+    totalIssuedShares = newTotalIssued;
+
+    return disclose(commitment);
+}
+
+/**
+ * @notice Privately transfers a fraction of shares to another investor using a nullifier-commitment model.
+ * @param senderSk Secret key of the sending investor.
+ * @param currentAmount Total shares in the current holding.
+ * @param currentSalt Salt used in the existing holding commitment.
+ * @param transferAmount Shares to transfer to the recipient.
+ * @param recipientPk Public key of the recipient investor.
+ * @param recipientSalt Random blinding salt for recipient's commitment.
+ * @param changeSalt Random blinding salt for sender's change commitment.
+ */
+export circuit transferShares(
+    senderSk: Bytes<32>,
+    currentAmount: Uint<64>,
+    currentSalt: Bytes<32>,
+    transferAmount: Uint<64>,
+    recipientPk: Bytes<32>,
+    recipientSalt: Bytes<32>,
+    changeSalt: Bytes<32>
+): TransferOutput {
+    // 1. Verify ownership of existing holding commitment
+    const senderPk = persistentHash<Bytes<32>>(senderSk);
+    const existingHolding = ShareHolding {
+        ownerPk: senderPk,
+        amount: currentAmount,
+        salt: currentSalt,
+    };
+    const existingCommitment = persistentHash<ShareHolding>(existingHolding);
+    assert(commitments.member(disclose(existingCommitment)), "Existing share commitment does not exist on-chain");
+
+    // 2. Compute nullifier and prevent double-spending
+    const nullifierData = NullifierData {
+        commitment: existingCommitment,
+        secretKey: senderSk,
+    };
+    const nullifier = persistentHash<NullifierData>(nullifierData);
+    assert(!nullifiers.member(disclose(nullifier)), "Share commitment has already been spent/transferred");
+
+    // 3. Enforce balance constraints
+    assert(currentAmount >= transferAmount, "Insufficient fractional share balance");
+    const changeAmount = (currentAmount - transferAmount) as Uint<64>;
+
+    // 4. Create recipient commitment
+    const recipientHolding = ShareHolding {
+        ownerPk: recipientPk,
+        amount: transferAmount,
+        salt: recipientSalt,
+    };
+    const recipientCommitment = persistentHash<ShareHolding>(recipientHolding);
+
+    // 5. Create change commitment for sender
+    const changeHolding = ShareHolding {
+        ownerPk: senderPk,
+        amount: changeAmount,
+        salt: changeSalt,
+    };
+    const changeCommitment = persistentHash<ShareHolding>(changeHolding);
+
+    // 6. State transitions (register nullifier and new commitments)
+    nullifiers.insert(disclose(nullifier));
+    commitments.insert(disclose(recipientCommitment));
+    commitments.insert(disclose(changeCommitment));
+
+    return TransferOutput {
+        recipientCommitment: disclose(recipientCommitment),
+        changeCommitment: disclose(changeCommitment),
+    };
+}
+
+/**
+ * @notice Proves in zero-knowledge that the caller holds at least `threshold` shares without revealing identity or balance.
+ * @param ownerSk Secret key of the owner.
+ * @param amount Exact share amount in the holding.
+ * @param salt Salt of the holding.
+ * @param threshold Minimum shareholding required (e.g. for voting or accreditation).
+ */
+export circuit proveShareThreshold(
+    ownerSk: Bytes<32>,
+    amount: Uint<64>,
+    salt: Bytes<32>,
+    threshold: Uint<64>
+): Boolean {
+    // 1. Verify existence of valid holding commitment
+    const ownerPk = persistentHash<Bytes<32>>(ownerSk);
+    const holding = ShareHolding {
+        ownerPk: ownerPk,
+        amount: amount,
+        salt: salt,
+    };
+    const commitment = persistentHash<ShareHolding>(holding);
+    assert(commitments.member(disclose(commitment)), "Invalid or unregistered share commitment");
+
+    // 2. Verify holding is unspent
+    const nullifierData = NullifierData {
+        commitment: commitment,
+        secretKey: ownerSk,
+    };
+    const nullifier = persistentHash<NullifierData>(nullifierData);
+    assert(!nullifiers.member(disclose(nullifier)), "Holding commitment has already been spent");
+
+    // 3. Verify threshold requirement
+    assert(amount >= threshold, "Holding amount does not satisfy threshold requirement");
+
+    return true;
+}

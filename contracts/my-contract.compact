@@ -1,0 +1,80 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+export enum AuctionState {
+    Bidding,
+    Revealing,
+    Finalized
+}
+
+export struct BidCommitment {
+    bidderPk: Bytes<32>,
+    bidAmount: Uint<64>,
+    salt: Bytes<32>
+}
+
+// Public state on the Midnight ledger
+export ledger seller: Bytes<32>;
+export ledger propertyId: Bytes<32>;
+export ledger minReservePrice: Uint<64>;
+export ledger state: AuctionState;
+export ledger highestBid: Uint<64>;
+export ledger winningBidder: Bytes<32>;
+export ledger bidCommitments: Map<Bytes<32>, Bytes<32>>;
+
+// Private witness functions (executed off-chain on the client)
+witness getBidDetails(): BidCommitment;
+
+constructor(
+    sellerPk: Bytes<32>,
+    propertyIdentifier: Bytes<32>,
+    reservePrice: Uint<64>
+) {
+    seller = disclose(sellerPk);
+    propertyId = disclose(propertyIdentifier);
+    minReservePrice = disclose(reservePrice);
+    state = AuctionState.Bidding;
+    highestBid = 0;
+    winningBidder = disclose(sellerPk);
+}
+
+// Bidders submit a private commitment (hash of their bid, public key, and salt)
+export circuit submitBid(bidderId: Bytes<32>, commitment: Bytes<32>): [] {
+    assert(state == AuctionState.Bidding, "Auction is not in Bidding phase");
+    bidCommitments.insert(disclose(bidderId), disclose(commitment));
+}
+
+// Seller transitions the auction to the reveal phase
+export circuit closeBidding(): [] {
+    assert(state == AuctionState.Bidding, "Auction is not in Bidding phase");
+    state = AuctionState.Revealing;
+}
+
+// Bidders privately prove their bid meets the commitment and update the winning bid
+export circuit revealBid(bidderId: Bytes<32>): [] {
+    assert(state == AuctionState.Revealing, "Auction is not in Revealing phase");
+    
+    // Fetch private bid parameters from client witness
+    const bid = getBidDetails();
+    
+    // Verify that the hash of the private bid matches the public commitment
+    const computedCommitment = persistentHash<BidCommitment>(bid);
+    const registeredCommitment = bidCommitments.lookup(disclose(bidderId));
+    
+    assert(registeredCommitment == computedCommitment, "Commitment hash mismatch");
+    assert(bid.bidderPk == bidderId, "Bidder ID mismatch");
+    assert(bid.bidAmount >= minReservePrice, "Bid below reserve price");
+    
+    // Update the winning bid if this revealed bid is strictly higher
+    if (disclose(bid.bidAmount > highestBid)) {
+        highestBid = disclose(bid.bidAmount);
+        winningBidder = disclose(bid.bidderPk);
+    }
+}
+
+// Finalize the auction
+export circuit finalizeAuction(): [] {
+    assert(state == AuctionState.Revealing, "Auction must be in Revealing phase");
+    state = AuctionState.Finalized;
+}

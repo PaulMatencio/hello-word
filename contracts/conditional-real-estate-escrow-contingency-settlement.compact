@@ -1,0 +1,139 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// Escrow lifecycle status
+enum EscrowStatus {
+    Created,
+    Funded,
+    Settled,
+    Refunded
+}
+
+// Public ledger state
+export ledger buyerPk: Bytes<32>;
+export ledger sellerPk: Bytes<32>;
+export ledger inspectorPk: Bytes<32>;
+export ledger titleAgentPk: Bytes<32>;
+
+export ledger propertyHash: Bytes<32>;
+export ledger purchasePrice: Uint<64>;
+export ledger escrowDeposit: Uint<64>;
+
+export ledger inspectionPassed: Boolean;
+export ledger financingApproved: Boolean;
+export ledger titleCleared: Boolean;
+export ledger status: EscrowStatus;
+
+// Witnesses for private key / secret proofs
+witness getBuyerSecret(): Bytes<32>;
+witness getSellerSecret(): Bytes<32>;
+witness getInspectorSecret(): Bytes<32>;
+witness getTitleAgentSecret(): Bytes<32>;
+
+// Constructor initializes escrow agreement parameters
+constructor(
+    _buyerPk: Bytes<32>,
+    _sellerPk: Bytes<32>,
+    _inspectorPk: Bytes<32>,
+    _titleAgentPk: Bytes<32>,
+    _propertyHash: Bytes<32>,
+    _purchasePrice: Uint<64>,
+    _escrowDeposit: Uint<64>
+) {
+    buyerPk = disclose(_buyerPk);
+    sellerPk = disclose(_sellerPk);
+    inspectorPk = disclose(_inspectorPk);
+    titleAgentPk = disclose(_titleAgentPk);
+    propertyHash = disclose(_propertyHash);
+    purchasePrice = disclose(_purchasePrice);
+    escrowDeposit = disclose(_escrowDeposit);
+
+    inspectionPassed = false;
+    financingApproved = false;
+    titleCleared = false;
+    status = EscrowStatus.Created;
+}
+
+// Buyer deposits initial earnest money into escrow
+export circuit depositEarnestMoney(amount: Uint<64>): [] {
+    assert(status == EscrowStatus.Created, "Escrow is not in Created state");
+    
+    // Verify buyer identity via private secret
+    const secret = getBuyerSecret();
+    const derivedPk = persistentHash<Bytes<32>>(secret);
+    assert(derivedPk == buyerPk, "Unauthorized: Caller is not the buyer");
+    
+    assert(amount >= escrowDeposit, "Deposit amount must meet required escrow deposit");
+
+    status = EscrowStatus.Funded;
+}
+
+// Certified Inspector completes inspection contingency
+export circuit submitInspectionReport(passed: Boolean): [] {
+    assert(status == EscrowStatus.Funded, "Escrow must be funded to process contingencies");
+    
+    // Verify inspector identity
+    const secret = getInspectorSecret();
+    const derivedPk = persistentHash<Bytes<32>>(secret);
+    assert(derivedPk == inspectorPk, "Unauthorized: Caller is not the authorized inspector");
+
+    inspectionPassed = disclose(passed);
+}
+
+// Buyer/Lender approves loan/financing contingency
+export circuit confirmFinancingApproval(approved: Boolean): [] {
+    assert(status == EscrowStatus.Funded, "Escrow must be funded to process contingencies");
+    
+    // Verify buyer identity
+    const secret = getBuyerSecret();
+    const derivedPk = persistentHash<Bytes<32>>(secret);
+    assert(derivedPk == buyerPk, "Unauthorized: Caller is not the buyer");
+
+    financingApproved = disclose(approved);
+}
+
+// Title Agent verifies and clears title
+export circuit submitTitleClearance(cleared: Boolean): [] {
+    assert(status == EscrowStatus.Funded, "Escrow must be funded to process contingencies");
+    
+    // Verify title agent identity
+    const secret = getTitleAgentSecret();
+    const derivedPk = persistentHash<Bytes<32>>(secret);
+    assert(derivedPk == titleAgentPk, "Unauthorized: Caller is not the authorized title agent");
+
+    titleCleared = disclose(cleared);
+}
+
+// Settle escrow and complete property transfer once all contingencies are satisfied
+export circuit settleEscrow(): [] {
+    assert(status == EscrowStatus.Funded, "Escrow is not active/funded");
+    assert(inspectionPassed, "Inspection contingency not passed");
+    assert(financingApproved, "Financing contingency not cleared");
+    assert(titleCleared, "Title clearance contingency not met");
+
+    // Can be triggered by either the buyer or seller
+    const buyerSecret = getBuyerSecret();
+    const sellerSecret = getSellerSecret();
+    const isBuyer = persistentHash<Bytes<32>>(buyerSecret) == buyerPk;
+    const isSeller = persistentHash<Bytes<32>>(sellerSecret) == sellerPk;
+    
+    assert(isBuyer || isSeller, "Unauthorized: Caller must be buyer or seller");
+
+    status = EscrowStatus.Settled;
+}
+
+// Refund escrow to buyer if any contingency fails or cancellation criteria are met
+export circuit cancelAndRefund(): [] {
+    assert(status == EscrowStatus.Funded, "Escrow cannot be refunded in current status");
+    
+    const buyerSecret = getBuyerSecret();
+    const isBuyer = persistentHash<Bytes<32>>(buyerSecret) == buyerPk;
+    assert(isBuyer, "Unauthorized: Only buyer can request contingency refund");
+
+    // Ensure at least one critical contingency failed before allowing refund
+    const canRefund = (!inspectionPassed) || (!financingApproved) || (!titleCleared);
+    assert(canRefund, "Cannot refund: all contingencies are currently satisfied");
+
+    status = EscrowStatus.Refunded;
+}

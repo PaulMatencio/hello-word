@@ -4,22 +4,62 @@ import { GoogleGenAI } from '@google/genai';
 export const dynamic = 'force-dynamic';
 
 const COMPACT_SYSTEM_PROMPT = `
-You are an expert AI assistant specialized in the Midnight blockchain, the Compact smart contract programming language, and the Midnight.js TypeScript SDK.
+You are an expert AI assistant specialized in the Midnight blockchain, the Compact smart contract programming language (version >= 0.23), and the Midnight.js TypeScript SDK.
 
-### Midnight Compact Language Principles:
+### Midnight Compact Language Principles (v >= 0.23):
 1. **State & Types**:
    - \`export ledger <var>: <Type>;\` declares public on-chain state stored on the ledger.
-   - Types include: \`Cell<T>\`, \`Map<K, V>\`, \`Set<T>\`, \`Uint<N>\`, \`Bytes<N>\`, \`Boolean\`, \`String\`, \`Vector<N, T>\`, \`Maybe<T>\`, custom structs, and enums.
-   - \`constructor(...) { ... }\` initializes ledger state.
-2. **Witness Functions**:
+   - Types include: \`Uint<N>\` (e.g. \`Uint<32>\`, \`Uint<64>\`), \`Bytes<N>\` (e.g. \`Bytes<32>\`), \`Boolean\`, \`Counter\`, \`Map<K, V>\`, \`Set<T>\`, \`Vector<N, T>\`, \`Maybe<T>\`, \`Opaque<"string">\`, custom structs, and enums. (NOTE: Do NOT wrap types in \`Cell<...>\`).
+   - \`constructor(...) { ... }\` initializes all declared ledger state fields.
+
+2. **MANDATORY DISCLOSE() RULE ON CONSTRUCTOR & CIRCUIT ARGUMENTS (CRITICAL)**:
+   - In Midnight Compact, **ALL arguments passed to \`constructor(...)\` and \`export circuit ...(...)\` are considered PRIVATE data by default.**
+   - **ALL values returned by \`witness ...()\` functions are PRIVATE data.**
+   - \`disclose(<expr>)\` is a built-in wrapper function used to explicitly reveal private data on the public ledger.
+   - **Whenever assigning, writing, or updating ANY constructor argument, circuit parameter, or witness value into an on-chain public ledger field (\`export ledger\`), you MUST wrap it in \`disclose(...)\`!**
+   - Direct assignment like \`manager = initialManager;\` is an INVALID type error in Compact. You MUST write \`manager = disclose(initialManager);\`.
+   
+   Example Correct Constructor:
+   \`\`\`compact
+   export ledger manager: Bytes<32>;
+   export ledger propertyId: Bytes<32>;
+   export ledger totalAuthorizedShares: Uint<64>;
+   export ledger totalIssuedShares: Uint<64>;
+
+   constructor(
+       initialManager: Bytes<32>,
+       initialPropertyId: Bytes<32>,
+       authorizedShares: Uint<64>
+   ) {
+       // ALWAYS wrap constructor arguments in disclose() when assigning to public ledger:
+       manager = disclose(initialManager);
+       propertyId = disclose(initialPropertyId);
+       totalAuthorizedShares = disclose(authorizedShares);
+       totalIssuedShares = 0; // Literal constants do not need disclose()
+   }
+   \`\`\`
+
+   Example Correct Circuit:
+   \`\`\`compact
+   export circuit updateManager(newManager: Bytes<32>): [] {
+       manager = disclose(newManager); // ALWAYS disclose() parameter before writing to ledger
+   }
+
+   export circuit deposit(amount: Uint<64>): [] {
+       balance = (balance + disclose(amount)) as Uint<64>; // ALWAYS disclose() parameter in arithmetic
+   }
+   \`\`\`
+
+3. **Witness Functions**:
    - Witnesses represent off-chain private computations / private state lookups.
    - Declaration: \`witness <name>(<args>): <ReturnType>;\`
    - CRITICAL WITNESS CONVENTION in TypeScript SDK: Witness functions in client runtime must return a 2-element tuple \`[nextPrivateState, witnessValue]\` (i.e. \`[PS, T]\`).
-3. **Circuits**:
+
+4. **Circuits & Assertions**:
    - \`export circuit <name>(<args>): <ReturnType> { ... }\` defines ZK circuits executed on client and verified on-chain.
-   - \`assert <condition>, "<error message>";\` enforces constraints and validates state transitions.
-   - Circuits update ledger variables, call witnesses for private inputs, and compute ZK proofs.
-   - \`disclose(<expr>)\` is used when revealing private data to the public ledger context.
+   - \`assert(condition, "error message");\` enforces constraints and validates state transitions. Parentheses around condition and message are MANDATORY: \`assert(x > 0, "must be positive");\`.
+   - Hashing: Use \`persistentHash<Type>(value)\` or \`transientHash<Type>(value)\` (e.g., \`persistentHash<Bytes<32>>(secret)\`). Do NOT use \`sha256(...)\` as a bare function name.
+   - Arithmetic Casting: Operations on bounded types like \`Uint<32>\` or \`Uint<64>\` must be explicitly cast back: \`count = (count + disclose(by)) as Uint<32>;\`.
    - \`kernel.self()\` returns the contract address.
 
 ### Midnight TypeScript Client SDK (@midnight-ntwrk/midnight-js-* & compact-runtime):
@@ -30,11 +70,12 @@ You are an expert AI assistant specialized in the Midnight blockchain, the Compa
   - Initial State: \`const { currentContractState, currentPrivateState, currentZswapLocalState } = contract.initialState(constructorCtx);\`
   - Circuit Context: \`CompactRuntime.createCircuitContext(contractAddress, coinPublicKey, contractStateData, privateState);\`
 - Invoking Circuits: \`const result = contract.circuits.<circuitName>(circuitContext, ...args);\`
-- Reading state: \`const state = ledger(result.context.currentQueryContext.state.state);\`
+- Reading state: \`const state = ledger(result.context.currentQueryContext.state);\`
 
 When responding:
 - Provide high-quality, idiomatic, clean code.
-- When fixing errors, explain the root cause clearly and provide the exact corrected code snippet or replacement.
+- ALWAYS use \`disclose(...)\` on constructor arguments, circuit arguments, and witnesses when assigning to public ledger variables.
+- When fixing compiler errors, identify the exact Compact syntax or type mismatch (such as missing disclose(), missing parentheses in assert, using sha256 instead of persistentHash, or missing constructor) and provide the complete, compilable Compact code block.
 - When generating Midnight.js clients or Vitest test suites, ensure all imports, mock contexts, and witness tuples \`[PS, Value]\` are strictly type-safe.
 `;
 
@@ -86,9 +127,16 @@ ${compilerOutput || JSON.stringify(diagnostics, null, 2)}
 
 ${prompt ? `Additional user notes: ${prompt}` : ''}
 
+Compact 0.23 Strict Guidelines to follow:
+1. **assert syntax**: Must use parentheses \`assert(condition, "error message");\`.
+2. **hashing**: Use \`persistentHash<Bytes<32>>(data)\` or \`transientHash<Bytes<32>>(data)\` instead of \`sha256\`.
+3. **ledger fields**: Use bare types \`export ledger x: Boolean;\`, \`export ledger x: Bytes<32>;\` (never \`Cell<...>\`).
+4. **disclosures**: Wrap circuit parameters and witnesses in \`disclose(...)\` when storing to ledger or doing arithmetic: \`commitHash = disclose(initialHash);\`, \`count = (count + disclose(by)) as Uint<32>;\`.
+5. **constructors**: Ensure \`constructor(...) { ... }\` initializes all declared ledger variables.
+
 Please:
 1. Explain what caused the error.
-2. Provide the complete fixed code block inside \`\`\`compact ... \`\`\`.
+2. Provide the complete, compilable fixed code block inside \`\`\`compact ... \`\`\`.
 3. Highlight what changed and why.
 `;
         } else if (action === 'generate_client') {
@@ -155,6 +203,7 @@ Provide the complete, strongly-typed TypeScript SDK file (intended for \`src/cli
    - Comprehensive TSDoc inline comments.
 `;
         } else if (action === 'generate_tests') {
+            const cleanContractName = filename.replace(/\.compact$/, '');
             contextualPrompt = `
 Task: Generate a comprehensive Vitest unit test suite for this Compact contract.
 Contract Filename: ${filename}
@@ -168,11 +217,29 @@ ${dtsContent ? `TypeScript Type Definitions (.d.ts):\n\`\`\`typescript\n${dtsCon
 
 ${prompt ? `Additional test cases requested: ${prompt}` : ''}
 
-Please generate a complete Vitest test file (\`tests/contracts/${filename.replace(/\.compact$/, '')}.test.ts\`) that:
-1. Uses \`vitest\` (\`describe\`, \`it\`, \`expect\`).
-2. Creates deterministic mock keys and properly typed mock witnesses (\`createMockWitnesses = (sk: Uint8Array): Witnesses<any> => ({ ... })\`).
-3. Uses \`CompactRuntime.createConstructorContext\` and \`CompactRuntime.createCircuitContext\` to simulate local circuit execution.
-4. Tests contract initialization, positive state transitions for all circuits, and negative assertion failure cases (\`expect(...).toThrow(...)\`).
+Please generate a complete Vitest test file (\`tests/contracts/${cleanContractName}.test.ts\`) that:
+1. Imports Vitest: \`import { describe, it, expect, beforeEach } from 'vitest';\`
+2. Imports Compact Runtime: \`import * as CompactRuntime from '@midnight-ntwrk/compact-runtime';\`
+3. STRICTLY imports the compiled contract artifacts from the managed directory:
+   \`import { Contract, ledger, State, type Witnesses } from '../../contracts/managed/${cleanContractName}/contract/index.js';\` (NEVER use \`./contract/index.js\`).
+4. Creates deterministic mock keys and properly typed mock witnesses:
+   \`\`\`typescript
+   const aliceSecretKey = new Uint8Array(32).fill(0xaa);
+   const mockCoinPublicKey = '01'.repeat(32);
+   const mockContractAddress = '00'.repeat(32);
+   const createMockWitnesses = (secretKey: Uint8Array): Witnesses<MyPrivateState> => ({
+     localSecretKey: (context) => {
+       const currentPs = context?.privateState ?? { secretKey };
+       return [currentPs, currentPs.secretKey ?? secretKey];
+     },
+   });
+   \`\`\`
+5. Uses \`CompactRuntime.createConstructorContext\` and \`CompactRuntime.createCircuitContext\` to simulate local circuit execution:
+   - Initial circuit call uses \`currentContractState.data\` (from \`initialState\`).
+   - Circuit chaining passes \`result.context.currentQueryContext.state\` directly as \`contractState\` (DO NOT use \`.data\`, as \`currentQueryContext.state\` is already a ChargedState).
+   - When chaining circuits, pass \`result.context.currentPrivateState ?? initialPrivateState\` as the private state.
+   - Query ledger state using \`const ledgerState = ledger(result.context.currentQueryContext.state);\` (or \`ledger(currentContractState.data)\` for constructor state).
+6. Tests contract initialization, positive state transitions for all circuits, and negative assertion failure cases (\`expect(() => contract.circuits.xyz(ctx, ...)).toThrow(...)\`).
 `;
         } else if (action === 'audit_zk') {
             contextualPrompt = `

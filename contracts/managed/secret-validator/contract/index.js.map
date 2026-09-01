@@ -1,0 +1,8 @@
+{
+  "version": 3,
+  "file": "index.js",
+  "sourceRoot": "../../src/",
+  "sources": ["secret-validator.compact", "compiler/standard-library.compact"],
+  "names": [],
+  "mappings": ";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;EAWA;;;;;;;;;;;;;MAMA,AAAA,aAGC;;;;;cAH4B,SAAkB;;;;;;;;;;;;;;;;;;yCAAlB,SAAkB;;;;;;;;;+CAAlB,SAAkB;;;OAG9C;MAGD,AAAA,YAIC;;;;;;;;;;;;;;;;;;;;;;OAAA;;;;;;;;;;GAbA;EAHD;;;;;UAAY,aAAsB;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;IANlC;;;;;;;;;yEAAgC;IAChC;;;;;;;;;yEAAoC;IAMlC;;;;;;;;;yEAAQ;IACR;;;;;;;2HAAsB,aAAW;;yEAAvB;;;;;;;GACX;ECdD,AAAA,kBAAA;oEAAA;;;EDSA,AAAA,iBAAoC;;0DAApC,cAAoC;;;;;;;;;;;;;;GAAA;EAQpC,AAAA,gBAGC,4BAH4B,SAAkB;IAC7C;;;;;;;2HAAsB,SAAO;;yEAAnB;IACV;;;;;;;;;yEAAQ;;GACT;EAGD,AAAA,eAIC;UAHO,QAAyB;iEACE,QAAM;kEAAK;;;;;;;;;;;uIAAU;;IACtD;;;;;;;;;yEAAQ;;GACT;;;;;;;;;;;;;;;;;;;;IAtBD;qCAAA;;;;;;;;;;;0GAAgC;KAAA;IAChC;qCAAA;;;;;;;;;;;0GAAoC;KAAA;;;;;;;;;;"
+}

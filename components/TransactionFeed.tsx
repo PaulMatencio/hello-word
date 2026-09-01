@@ -50,9 +50,37 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
     window.open(scannerUrl, '_blank');
   }, []);
 
-  // If there are no transactions, render nothing
+  // If there are no transactions, render an empty state card
   if (!transactions || transactions.length === 0) {
-    return null;
+    return (
+      <div className="glass-panel p-8 sm:p-12 text-center relative space-y-4">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-500/10 border border-cyan-500/20 shadow-inner">
+          <History className="h-7 w-7 text-cyan-400" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-base font-bold text-white">No Recent Midnight Transactions</h3>
+          <p className="text-xs text-slate-400 max-w-md mx-auto">
+            Zero-Knowledge proofs, contract deployments, and circuit interactions will be recorded and displayed here in real time.
+          </p>
+        </div>
+        <div className="pt-2 flex items-center justify-center gap-3">
+          <Link
+            href="/ide"
+            className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white shadow-lg transition-all"
+          >
+            <Zap className="h-3.5 w-3.5" />
+            <span>Open IDE Studio</span>
+          </Link>
+          <Link
+            href="/contracts"
+            className="inline-flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-midnight-900 hover:bg-midnight-800 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white transition-all"
+          >
+            <FileCode2 className="h-3.5 w-3.5 text-slate-400" />
+            <span>Contracts Directory</span>
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   return (

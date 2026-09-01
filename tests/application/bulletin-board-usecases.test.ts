@@ -38,12 +38,12 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
         expect(result.steps).toHaveLength(6);
         expect(result.steps[0].status).toBe('success');
         expect(result.steps[1].status).toBe('success');
-        expect(result.steps[2].status).toBe('expected_error'); // Alice duplicate post
+        expect(result.steps[2].status).toBe('success'); // Alice owner edit
         expect(result.steps[3].status).toBe('expected_error'); // Bob post rejection
         expect(result.steps[4].status).toBe('expected_error'); // Bob unauthorized takedown
         expect(result.steps[5].status).toBe('success'); // Alice authorized takedown
         expect(result.finalLedgerState?.state).toBe(0); // VACANT
-        expect(result.finalLedgerState?.sequence).toBe(2);
+        expect(result.finalLedgerState?.sequence).toBe(4);
     });
 
     it('ExecuteBulletinBoardCircuitUseCase should allow Alice to post and enforce Bob rejection', async () => {
@@ -70,7 +70,7 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
                 identity: 'Bob',
                 message: 'Bob Unauthorized Post',
             })
-        ).rejects.toThrow(/Attempted to post to an occupied board/);
+        ).rejects.toThrow(/Only the current owner can edit the post/);
 
         // 4. Bob attempts takedown -> must throw ownership assertion
         await expect(
@@ -91,7 +91,7 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
         expect(takeDownRes.action).toBe('takeDown');
         expect(takeDownRes.result).toBe('Clean Architecture First Post');
         expect(takeDownRes.nextLedgerState?.state).toBe(0); // VACANT
-        expect(takeDownRes.nextLedgerState?.sequence).toBe(2);
+        expect(takeDownRes.nextLedgerState?.sequence).toBe(3);
     });
 
     describe('postMessage Use Cases', () => {
@@ -109,13 +109,13 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
             expect(res.nextLedgerState?.state).toBe(1); // OCCUPIED
             expect(res.nextLedgerState?.message.is_some).toBe(true);
             expect(res.nextLedgerState?.message.value).toBe('Initial Post via postMessage');
-            expect(res.nextLedgerState?.sequence).toBe(1);
+            expect(res.nextLedgerState?.sequence).toBe(2);
         });
 
         it('should allow the owner to override their message on an OCCUPIED board', async () => {
             await resetStateUseCase.execute({ sessionId: testSession });
 
-            // 1. Initial post
+            // 1. Initial post (seq 2)
             await executeCircuitUseCase.execute({
                 sessionId: testSession,
                 action: 'postMessage',
@@ -123,7 +123,7 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
                 message: 'Original Message',
             });
 
-            // 2. Owner overrides her post
+            // 2. Owner overrides her post (seq 3)
             const overrideRes = await executeCircuitUseCase.execute({
                 sessionId: testSession,
                 action: 'postMessage',
@@ -133,7 +133,7 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
 
             expect(overrideRes.nextLedgerState?.state).toBe(1);
             expect(overrideRes.nextLedgerState?.message.value).toBe('Updated by Alice');
-            expect(overrideRes.nextLedgerState?.sequence).toBe(2);
+            expect(overrideRes.nextLedgerState?.sequence).toBe(3);
         });
 
         it('should reject message override when called by a non-owner', async () => {
@@ -155,13 +155,13 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
                     identity: 'Bob',
                     message: 'Bob Malicious Edit',
                 })
-            ).rejects.toThrow(/Only the current owner can override their message/);
+            ).rejects.toThrow(/Only the current owner can edit the post/);
         });
 
         it('should allow consecutive edits by the owner with sequence increments', async () => {
             await resetStateUseCase.execute({ sessionId: testSession });
 
-            // Post 1 (Seq 1)
+            // Post 1 (Seq 2)
             await executeCircuitUseCase.execute({
                 sessionId: testSession,
                 action: 'postMessage',
@@ -169,31 +169,31 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
                 message: 'Revision 1',
             });
 
-            // Post 2 (Seq 2)
+            // Post 2 (Seq 3)
             const rev2 = await executeCircuitUseCase.execute({
                 sessionId: testSession,
                 action: 'postMessage',
                 identity: 'Alice',
                 message: 'Revision 2',
             });
-            expect(rev2.nextLedgerState?.sequence).toBe(2);
+            expect(rev2.nextLedgerState?.sequence).toBe(3);
             expect(rev2.nextLedgerState?.message.value).toBe('Revision 2');
 
-            // Post 3 (Seq 3)
+            // Post 3 (Seq 4)
             const rev3 = await executeCircuitUseCase.execute({
                 sessionId: testSession,
                 action: 'postMessage',
                 identity: 'Alice',
                 message: 'Revision 3',
             });
-            expect(rev3.nextLedgerState?.sequence).toBe(3);
+            expect(rev3.nextLedgerState?.sequence).toBe(4);
             expect(rev3.nextLedgerState?.message.value).toBe('Revision 3');
         });
 
         it('should allow owner to takeDown post after multiple postMessage updates', async () => {
             await resetStateUseCase.execute({ sessionId: testSession });
 
-            // Initial + 2 updates
+            // Initial + 2 updates (seq 2, 3, 4)
             await executeCircuitUseCase.execute({
                 sessionId: testSession,
                 action: 'postMessage',
@@ -207,7 +207,7 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
                 message: 'Second',
             });
 
-            // Alice takes down post
+            // Alice takes down post (seq 4)
             const takeDownRes = await executeCircuitUseCase.execute({
                 sessionId: testSession,
                 action: 'takeDown',
@@ -218,7 +218,7 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
             expect(takeDownRes.result).toBe('Second');
             expect(takeDownRes.nextLedgerState?.state).toBe(0); // VACANT
             expect(takeDownRes.nextLedgerState?.message.is_some).toBe(false);
-            expect(takeDownRes.nextLedgerState?.sequence).toBe(3);
+            expect(takeDownRes.nextLedgerState?.sequence).toBe(4);
         });
     });
 });

@@ -1,159 +1,136 @@
 /**
- * Quickstart Example: Midnight Bulletin Board Client SDK
+ * Quickstart Example: BulletinBoard Client SDK
  *
  * How to run:
  *   npx tsx examples/bulletin-board-example.ts
  */
 
 import {
-  createConstructorContext,
-  createCircuitContext,
+  CompactRuntime,
+  type ConstructorContext,
+  type CircuitContext,
 } from '@midnight-ntwrk/compact-runtime';
 import {
   BulletinBoardClient,
   type BulletinBoardPrivateState,
+  createBulletinBoardWitnesses,
 } from '../src/client/bulletin-board-sdk.js';
 
-async function runBulletinBoardDemo(): Promise<void> {
-  console.log('=== Midnight Bulletin Board SDK Demo ===\n');
+// Helper function to generate mock 32-byte keys
+function mockKey(byteHex: string): Uint8Array {
+  return new Uint8Array(32).fill(parseInt(byteHex, 16));
+}
 
-  // 1. Setup mock keys & addresses (32-byte hex strings)
+async function runExample() {
+  console.log('=== Bulletin Board SDK Quickstart Walkthrough ===\n');
+
+  // 1. Setup Identities & Mock Addresses
+  const aliceSecretKey = mockKey('0xAA');
+  const bobSecretKey = mockKey('0xBB');
+
+  let alicePrivateState: BulletinBoardPrivateState = { secretKey: aliceSecretKey };
+  let bobPrivateState: BulletinBoardPrivateState = { secretKey: bobSecretKey };
+
   const coinPublicKey = '01'.repeat(32);
   const contractAddress = '00'.repeat(32);
 
-  // 2. Initialize Alice and Bob private states
-  const aliceSecretKey = new Uint8Array(32).fill(7);
-  const bobSecretKey = new Uint8Array(32).fill(9);
+  const client = new BulletinBoardClient<BulletinBoardPrivateState>(createBulletinBoardWitnesses());
 
-  //  32-byte private key used to prove ownership of posts for Alice 
-  let alicePrivateState: BulletinBoardPrivateState = {
-    secretKey: aliceSecretKey,
-  };
+  // 2. Initialize Contract State (Constructor)
+  console.log('1. Initializing contract state...');
+  const constructorCtx: ConstructorContext<BulletinBoardPrivateState> =
+    CompactRuntime.createConstructorContext(alicePrivateState, coinPublicKey);
 
-  //  32-byte private key used to prove ownership of posts for Bob
-  const bobPrivateState: BulletinBoardPrivateState = {
-    secretKey: bobSecretKey,
-  };
-
-
-  /**
-   * client for interact with bulletin board contract
-   */
-  const client = new BulletinBoardClient<BulletinBoardPrivateState>();
-  // 3. Initialize Contract State (Constructor)
-  console.log('[1] Initializing Contract...');
-  const constructorCtx = createConstructorContext<BulletinBoardPrivateState>(
-    alicePrivateState,
-    coinPublicKey
-  );
   const initResult = client.initialState(constructorCtx);
-  let currentChargedState = initResult.currentContractState.data;
-  console.log("currentChargedState", currentChargedState)
   alicePrivateState = initResult.currentPrivateState;
-  console.log("currentPrivateState", alicePrivateState)
+  let currentChargedState = initResult.currentContractState.data;
+
   let ledgerState = client.queryLedgerStateFromRaw(currentChargedState);
-  console.log(`Initial State -> state: ${ledgerState.state}, sequence: ${ledgerState.sequence}\n`);
+  console.log('-> Initial State:', {
+    state: ledgerState.state, // 0 = VACANT
+    sequence: ledgerState.sequence,
+    message: ledgerState.message.is_some ? ledgerState.message.value : null,
+  });
 
+  // 3. Alice Posts First Message to Vacant Board
+  console.log('\n2. Alice posts initial message: "Hello, Midnight Network!"');
+  let circuitCtx: CircuitContext<BulletinBoardPrivateState> =
+    CompactRuntime.createCircuitContext(
+      contractAddress,
+      coinPublicKey,
+      currentChargedState,
+      alicePrivateState,
+    );
 
-
-  console.log('[1]  creating circuit context');
-  const circuitCtx = createCircuitContext<BulletinBoardPrivateState>(
-    contractAddress,
-    coinPublicKey,
-    currentChargedState,
-    alicePrivateState
-  );
-
-  //   query  ledger state
-  ledgerState = client.queryLedgerStateFromRaw(currentChargedState);
-  console.log(`Initial Board State: ${ledgerState.state === 1 ? 'OCCUPIED' : 'VACANT'}`);
-  console.log(`Initial Message: "${ledgerState.message.is_some ? ledgerState.message.value : 'None'}"`);
-  console.log(`Initial Owner Tag: ${Buffer.from(ledgerState.owner).toString('hex')}\n`);
-
-
-  // 4. Alice posts a message  
-  console.log("[2]Alice posts a message 1:\n");
-  let postResult = client.post(circuitCtx, 'Hello Midnight Zero-Knowledge World!');
-  currentChargedState = postResult.context.currentQueryContext.state;
+  let postResult = client.postMessage(circuitCtx, 'Hello, Midnight Network!');
   alicePrivateState = postResult.context.currentPrivateState;
+  currentChargedState = postResult.context.currentQueryContext.state;
 
   ledgerState = client.queryLedgerStateFromRaw(currentChargedState);
-  console.log("After Alice posted a message 1:");
-  console.log(`Board State: ${ledgerState.state === 1 ? 'OCCUPIED' : 'VACANT'}`);
-  console.log(`Message: "${ledgerState.message.is_some ? ledgerState.message.value : 'None'}"`);
-  console.log(`Owner Tag: ${Buffer.from(ledgerState.owner).toString('hex')}\n`);
+  console.log('-> Board State after Alice post:', {
+    state: ledgerState.state, // 1 = OCCUPIED
+    sequence: ledgerState.sequence,
+    message: ledgerState.message.is_some ? ledgerState.message.value : null,
+  });
 
-
-  try {
-    console.log("[3] Alice posts a message 2");
-    postResult = client.post(circuitCtx, 'Hello  2  Midnight Zero-Knowledge World! ');
-    currentChargedState = postResult.context.currentQueryContext.state;
-    alicePrivateState = postResult.context.currentPrivateState;
-
-    ledgerState = client.queryLedgerStateFromRaw(currentChargedState);
-    console.log(`Message 2: "${ledgerState.message.is_some ? ledgerState.message.value : 'None'}\n"`);
-    // console.log(`Owner Tag: ${Buffer.from(ledgerState.owner).toString('hex')}\n`);
-  } catch (err: unknown) {
-    console.log(`Expected assertion error caught: ${(err as Error).message}\n`);
-  }
-
-
-  // 5. Bob attempts to post a message
-  console.log('[4] Bob attempts to post a message (Should fail)...');
-  const unauthorizedCtx = createCircuitContext<BulletinBoardPrivateState>(
+  // 4. Alice Updates Message
+  console.log('\n3. Alice updates message: "Midnight Zero-Knowledge Bulletin v2"');
+  circuitCtx = CompactRuntime.createCircuitContext(
     contractAddress,
     coinPublicKey,
     currentChargedState,
-    bobPrivateState
+    alicePrivateState,
   );
 
+  let updateResult = client.postMessage(circuitCtx, 'Midnight Zero-Knowledge Bulletin v2');
+  alicePrivateState = updateResult.context.currentPrivateState;
+  currentChargedState = updateResult.context.currentQueryContext.state;
+
+  ledgerState = client.queryLedgerStateFromRaw(currentChargedState);
+  console.log('-> Board State after Alice update:', {
+    state: ledgerState.state,
+    sequence: ledgerState.sequence,
+    message: ledgerState.message.is_some ? ledgerState.message.value : null,
+  });
+
+  // 5. Unauthorized User (Bob) attempts to update the message (Should Fail)
+  console.log('\n4. Bob attempts to overwrite Alice\'s post (unauthorized)...');
   try {
-    postResult = client.post(unauthorizedCtx, 'Hello  3  Midnight Zero-Knowledge World! ');
-  } catch (err: unknown) {
-    console.log(`Expected assertion error caught: ${(err as Error).message}\n`);
+    const bobCircuitCtx = CompactRuntime.createCircuitContext(
+      contractAddress,
+      coinPublicKey,
+      currentChargedState,
+      bobPrivateState,
+    );
+    client.postMessage(bobCircuitCtx, 'Bob malicious overwrite');
+    console.error('ERROR: Bob should not have been allowed to overwrite!');
+  } catch (err: any) {
+    console.log('-> Successfully rejected unauthorized update with error:', err.message);
   }
 
-
-  console.log('[5] Bob attempts unauthorized takedown (Should fail)...');
-  try {
-    client.takeDown(unauthorizedCtx);
-    console.error('Error: Unauthorized takedown succeeded unexpectedly!');
-  } catch (err: unknown) {
-    console.log(`Expected assertion error caught: ${(err as Error).message}\n`);
-    console.log(`Owner Tag: ${Buffer.from(ledgerState.owner).toString('hex')}\n`)
-    console.log(`Message: "${ledgerState.message.is_some ? ledgerState.message.value : 'None'}"`);
-  }
-
-  // 6. Alice takes down her own post
-  console.log('[5] Alice takes down her post...');
-  const authorizedCtx = createCircuitContext<BulletinBoardPrivateState>(
+  // 6. Alice Takes Down Her Message
+  console.log('\n5. Alice takes down the message...');
+  circuitCtx = CompactRuntime.createCircuitContext(
     contractAddress,
     coinPublicKey,
     currentChargedState,
-    alicePrivateState
+    alicePrivateState,
   );
 
-  const takeDownResult = client.takeDown(authorizedCtx);
-  currentChargedState = takeDownResult.context.currentQueryContext.state;
+  const takeDownResult = client.takeDown(circuitCtx);
   alicePrivateState = takeDownResult.context.currentPrivateState;
-
-  console.log(`Removed Message Content: "${takeDownResult.result}"`);
+  currentChargedState = takeDownResult.context.currentQueryContext.state;
+  const deletedMessage = takeDownResult.result;
 
   ledgerState = client.queryLedgerStateFromRaw(currentChargedState);
-  console.log(`Board State: ${ledgerState.state === 0 ? 'VACANT' : 'OCCUPIED'}`);
-  console.log(`Sequence Counter: ${ledgerState.sequence}`);
-  console.log(`Current Message: ${ledgerState.message.is_some ? ledgerState.message.value : 'None'}`);
+  console.log('-> Board State after takeDown:', {
+    state: ledgerState.state, // 0 = VACANT
+    sequence: ledgerState.sequence,
+    message: ledgerState.message.is_some ? ledgerState.message.value : null,
+    deletedMessageReturned: deletedMessage,
+  });
 
-  if (ledgerState.state === 0) {
-    console.log("alice takes down her post successfully")
-
-
-
-  }
-
-
-
-  console.log('\n=== Demo Completed Successfully ===');
+  console.log('\n=== Walkthrough completed successfully ===');
 }
 
-runBulletinBoardDemo().catch(console.error);
+runExample().catch(console.error);

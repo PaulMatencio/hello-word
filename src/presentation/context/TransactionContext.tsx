@@ -19,12 +19,15 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const fetchTransactions = useCallback(async () => {
         try {
             const res = await fetch('/api/wallet/history');
-            const data = await res.json();
+            if (!res.ok) return;
+            const text = await res.text();
+            if (!text.trim()) return;
+            const data = JSON.parse(text);
             if (data.success && Array.isArray(data.data)) {
                 setTransactions(data.data);
             }
         } catch (err) {
-            console.error('Failed to fetch transaction history:', err);
+            // Silently ignore transient errors
         } finally {
             setIsLoadingTx(false);
         }

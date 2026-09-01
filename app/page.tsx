@@ -1,158 +1,143 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { useSystem } from '@/src/presentation/context/SystemContext';
-import { useWallet } from '@/src/presentation/context/WalletContext';
+import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useTransactions } from '@/src/presentation/context/TransactionContext';
-import { MessageBoard } from '@/components/MessageBoard';
-import { MessagePublisher } from '@/components/MessagePublisher';
-import { WalletStudio } from '@/components/WalletStudio';
-import { ContractManager } from '@/components/ContractManager';
+import { useSystem } from '@/src/presentation/context/SystemContext';
 import { TransactionFeed } from '@/components/TransactionFeed';
-import type { TxRecord } from '@/src/types/tx';
+import {
+  History,
+  RefreshCw,
+  Zap,
+  FileCode2,
+  Activity,
+  ShieldCheck,
+  ExternalLink,
+  Layers,
+} from 'lucide-react';
 
 export default function Home() {
-  const { systemHealth, activeContractAddress, setActiveContractAddress, setIsSyncDashboardOpen, fetchSystemHealth } = useSystem();
-  const { seed, setSeed, defaultSeed, walletStatus, isLoadingWallet, isRegisteringDust, fetchWalletStatus, registerDust } = useWallet();
-  const { transactions, addTransaction, fetchTransactions } = useTransactions();
+  const { transactions, fetchTransactions, isLoadingTx } = useTransactions();
+  const { systemHealth } = useSystem();
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Contract On-Chain Message State
-  const [currentMessage, setCurrentMessage] = useState<string>('');
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
-  const [isLoadingMessage, setIsLoadingMessage] = useState<boolean>(false);
-
-  // Fetch On-Chain Message State
-  const fetchContractState = useCallback(async (targetAddr?: string) => {
-    const addr = targetAddr || activeContractAddress;
-    if (!addr) return;
-
-    setIsLoadingMessage(true);
-    try {
-      const res = await fetch(`/api/contract/state?address=${encodeURIComponent(addr)}`);
-      const data = await res.json();
-      if (data.success && data.data) {
-        setCurrentMessage(data.data.message || '');
-        setLastUpdated(data.data.lastChecked || new Date().toISOString());
-      }
-    } catch (err) {
-      console.error('Error fetching contract state:', err);
-    } finally {
-      setIsLoadingMessage(false);
-    }
-  }, [activeContractAddress]);
-
-  // Initial and periodic contract polling
+  // Auto-refresh transaction history periodically
   useEffect(() => {
-    if (activeContractAddress) {
-      fetchContractState(activeContractAddress);
-      const interval = setInterval(() => {
-        fetchContractState(activeContractAddress);
-      }, 10000);
-      return () => clearInterval(interval);
-    }
-  }, [activeContractAddress, fetchContractState]);
-
-  const handleRegisterDust = async () => {
-    const res = await registerDust();
-    if (!res.success) {
-      alert(res.message || 'Failed to register for DUST');
-    } else {
-      alert('DUST registration successful!');
-    }
-  };
-
-  const handleTxSuccess = (result: any) => {
-    const newTx: TxRecord = {
-      id: Math.random().toString(),
-      txHash: result.txHash,
-      contractAddress: result.contractAddress || activeContractAddress,
-      circuitName: 'storeMessage',
-      txType: 'contract_call',
-      blockHeight: result.blockHeight,
-      message: result.message,
-      timestamp: result.timestamp || new Date().toISOString(),
-      dustPaid: result.dustPaid,
-      durationMs: result.durationMs,
-    };
-    addTransaction(newTx);
-    setCurrentMessage(result.message);
-    setLastUpdated(new Date().toISOString());
-    fetchWalletStatus();
     fetchTransactions();
+    const interval = setInterval(() => {
+      fetchTransactions();
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [fetchTransactions]);
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    await fetchTransactions();
+    setTimeout(() => setIsRefreshing(false), 500);
   };
 
-  const handleTxError = (err: any) => {
-    const errorTx: TxRecord = {
-      id: Math.random().toString(),
-      txHash: '',
-      blockHeight: null,
-      message: '',
-      timestamp: new Date().toISOString(),
-      error: err.message || 'Transaction failed',
-    };
-    addTransaction(errorTx);
-  };
+  // Quick statistics
+  const deployCount = transactions.filter(
+    (tx) => tx.txType === 'contract_deploy' || tx.message?.startsWith('Contract Deployed')
+  ).length;
 
-  const handleDeploySuccess = (newAddress: string) => {
-    setActiveContractAddress(newAddress);
-    fetchContractState(newAddress);
-    fetchSystemHealth();
-    fetchTransactions();
-  };
+  const circuitCount = transactions.filter(
+    (tx) => tx.txType !== 'contract_deploy' && tx.txType !== 'token_transfer' && !tx.message?.startsWith('Contract Deployed') && !tx.message?.startsWith('Sent ')
+  ).length;
+
+  const transferCount = transactions.filter(
+    (tx) => tx.txType === 'token_transfer' || tx.message?.startsWith('Sent ')
+  ).length;
 
   return (
-    <div className="mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 space-y-8">
-      {/* Top Grid: Message Board & ZK Publisher */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        <MessageBoard
-          currentMessage={currentMessage}
-          contractAddress={activeContractAddress}
-          isLoading={isLoadingMessage}
-          onRefresh={() => fetchContractState()}
-          lastUpdated={lastUpdated}
-          onSetContractAddress={(addr) => {
-            setActiveContractAddress(addr);
-            fetchContractState(addr);
-          }}
-        />
+    <div className="mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 space-y-6">
+      {/* Top Banner / Dashboard Header */}
+      <div className="glass-panel p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden">
+        <div className="space-y-2 z-10">
+          <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-semibold">
+            <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            <span>Midnight Preprod Explorer & Ledger Feed</span>
+          </div>
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+            Recent Midnight Transactions
+          </h1>
+          <p className="text-sm text-slate-400 max-w-2xl">
+            Live Zero-Knowledge transactions, proof verifications, smart contract deployments, and circuit executions recorded on the Midnight network.
+          </p>
+        </div>
 
-        <MessagePublisher
-          seed={seed}
-          contractAddress={activeContractAddress}
-          onSuccess={handleTxSuccess}
-          onError={handleTxError}
-          dustBalance={walletStatus?.dustBalance || '0'}
-          isSynced={walletStatus?.isSynced ?? false}
-          syncPercentage={walletStatus?.syncProgress?.percentage ?? 0}
-        />
+        <div className="flex flex-wrap items-center gap-3 z-10">
+          <button
+            onClick={handleManualRefresh}
+            disabled={isLoadingTx || isRefreshing}
+            className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-midnight-900 hover:bg-midnight-800 border border-white/10 text-xs font-semibold text-slate-200 hover:text-white transition-all disabled:opacity-50 cursor-pointer shadow-sm"
+            title="Refresh transaction history"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 text-cyan-400 ${isRefreshing || isLoadingTx ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing || isLoadingTx ? 'Syncing...' : 'Refresh'}</span>
+          </button>
+
+          <Link
+            href="/ide"
+            className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white shadow-lg transition-all"
+          >
+            <Zap className="h-3.5 w-3.5" />
+            <span>IDE Studio</span>
+          </Link>
+
+          <Link
+            href="/contracts"
+            className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-midnight-900 hover:bg-midnight-800 border border-white/10 text-xs font-semibold text-slate-300 hover:text-white transition-all"
+          >
+            <FileCode2 className="h-3.5 w-3.5 text-slate-400" />
+            <span>Contracts</span>
+          </Link>
+        </div>
       </div>
 
-      {/* Middle: Wallet Studio */}
-      <WalletStudio
-        seed={seed}
-        setSeed={(newSeed) => {
-          setSeed(newSeed);
-          fetchWalletStatus(newSeed);
-        }}
-        walletStatus={walletStatus}
-        isLoading={isLoadingWallet}
-        onRefresh={() => fetchWalletStatus()}
-        onRegisterDust={handleRegisterDust}
-        isRegisteringDust={isRegisteringDust}
-        defaultSeed={defaultSeed}
-        onOpenSyncDashboard={() => setIsSyncDashboardOpen(true)}
-      />
+      {/* Overview Stat Counters */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="glass-panel p-4 space-y-1">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Total Transactions</span>
+            <History className="h-4 w-4 text-cyan-400" />
+          </div>
+          <p className="text-2xl font-bold text-white font-mono">{transactions.length}</p>
+          <p className="text-[11px] text-slate-500">Live recorded in session</p>
+        </div>
 
-      {/* Bottom Grid: Contract Manager & Transaction History */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-        <ContractManager
-          seed={seed}
-          onDeploySuccess={handleDeploySuccess}
-          deploymentInfo={systemHealth?.deployment}
-        />
+        <div className="glass-panel p-4 space-y-1">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Circuit Invocations</span>
+            <Zap className="h-4 w-4 text-indigo-400" />
+          </div>
+          <p className="text-2xl font-bold text-white font-mono">{circuitCount}</p>
+          <p className="text-[11px] text-slate-500">ZK proofs & assertions</p>
+        </div>
 
-        <TransactionFeed transactions={transactions} />
+        <div className="glass-panel p-4 space-y-1">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Contract Deploys</span>
+            <Layers className="h-4 w-4 text-purple-400" />
+          </div>
+          <p className="text-2xl font-bold text-white font-mono">{deployCount}</p>
+          <p className="text-[11px] text-slate-500">On-chain deployments</p>
+        </div>
+
+        <div className="glass-panel p-4 space-y-1">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Network Health</span>
+            <Activity className="h-4 w-4 text-emerald-400" />
+          </div>
+          <p className="text-2xl font-bold text-emerald-400 font-mono">
+            {systemHealth?.indexer?.status === 'online' && systemHealth?.proofServer?.status === 'online' ? 'Online' : 'Connected'}
+          </p>
+          <p className="text-[11px] text-slate-500">Preprod ZK Node</p>
+        </div>
       </div>
+
+      {/* Primary Component: Recent Midnight Transactions Feed */}
+      <TransactionFeed transactions={transactions} />
     </div>
   );
 }

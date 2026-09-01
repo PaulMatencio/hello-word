@@ -12,11 +12,11 @@ export ledger message: Maybe<Opaque<"string">>;
 export ledger sequence: Counter;
 export ledger owner: Bytes<32>;
 
-// Private witness function supplying caller's secret key
+// Private witness supplying caller's secret key
 witness localSecretKey(): Bytes<32>;
 
 /**
- * Initializes the bulletin board to VACANT state with sequence counter at 1.
+ * Initializes bulletin board to VACANT state with sequence counter at 1.
  */
 constructor() {
   state = State.VACANT;
@@ -37,41 +37,45 @@ circuit deriveOwnerTag(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
 }
 
 /**
- * Posts a message to a VACANT board or updates the message if called by the current owner.
+ * Posts a message to a VACANT board or updates the message if called by current owner.
  */
 export circuit postMessage(newMessage: Opaque<"string">): [] {
-  const currentSeq = sequence as Field as Bytes<32>;
-  const calculatedTag = deriveOwnerTag(localSecretKey(), currentSeq);
-
   if (state == State.VACANT) {
-    // Claim board and set initial owner tag
-    owner = disclose(calculatedTag);
+    const currentSeq = sequence as Field as Bytes<32>;
+    const tag = deriveOwnerTag(localSecretKey(), currentSeq);
+
+    owner = disclose(tag);
     message = disclose(some<Opaque<"string">>(newMessage));
     state = State.OCCUPIED;
+    // Advance sequence for subsequent transitions
+    sequence.increment(1);
   } else {
-    // Board is OCCUPIED: verify existing ownership
-    assert(owner == calculatedTag, "Only the current owner can edit the post");
+    // Board is OCCUPIED: verify existing ownership using the current sequence state
+    // Note: If sequence was incremented on claim, verify against (sequence - 1) or current stored tag
+    const currentTag = owner;
+    const computedTag = deriveOwnerTag(localSecretKey(), ((sequence as Field) - 1) as Bytes<32>);
+    assert(currentTag == computedTag, "Only the current owner can edit the post");
     
     // Update message
     message = disclose(some<Opaque<"string">>(newMessage));
     
     // Advance sequence and update owner tag for forward privacy/unlinkability
-    sequence.increment(1);
     const nextSeq = sequence as Field as Bytes<32>;
     owner = disclose(deriveOwnerTag(localSecretKey(), nextSeq));
+    sequence.increment(1);
   }
 }
 
 /**
- * Takes down an existing post. Only callable by the current owner.
+ * Takes down an existing post. Only callable by current owner.
  */
 export circuit takeDown(): Opaque<"string"> {
   assert(state == State.OCCUPIED, "Attempted to take down post from an empty board");
-  
-  const currentSeq = sequence as Field as Bytes<32>;
-  const expectedTag = deriveOwnerTag(localSecretKey(), currentSeq);
-  assert(owner == expectedTag, "Attempted to take down post, but not the current owner");
   assert(message.is_some, "Corrupted state: post is occupied but message is empty");
+
+  // Verify ownership tag using the sequence index at which the post was last written
+  const expectedTag = deriveOwnerTag(localSecretKey(), ((sequence as Field) - 1) as Bytes<32>);
+  assert(owner == expectedTag, "Attempted to take down post, but not the current owner");
 
   const formerMsg = message.value;
   

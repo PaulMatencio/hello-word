@@ -71,13 +71,17 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 signal: controller.signal,
             });
             clearTimeout(timeoutId);
-            const data = await res.json();
+            if (!res.ok) return;
+            const text = await res.text();
+            if (!text.trim()) return;
+            const data = JSON.parse(text);
             if (data.success && data.data) {
                 setWalletStatus(data.data);
             }
         } catch (err: any) {
-            if (err.name !== 'AbortError') {
-                console.error('Failed to fetch wallet status:', err);
+            // Silently ignore transient network aborts / reloads during hot compilation
+            if (err.name !== 'AbortError' && !(err instanceof SyntaxError)) {
+                console.warn('Wallet status sync issue:', err.message || err);
             }
         } finally {
             clearTimeout(timeoutId);
@@ -112,7 +116,8 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ seed }),
             });
-            const data = await res.json();
+            const text = await res.text();
+            const data = text ? JSON.parse(text) : {};
             if (data.success) {
                 await fetchWalletStatus(seed);
                 return { success: true, txHash: data.data?.txHash };

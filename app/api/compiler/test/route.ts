@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 
         const suites = (parsedJson.testResults || []).map((fileResult: any) => {
             const relativeName = path.relative(process.cwd(), fileResult.name);
-            const tests = (fileResult.assertionResults || []).map((assertion: any) => ({
+            let tests = (fileResult.assertionResults || []).map((assertion: any) => ({
                 title: assertion.title,
                 fullName: assertion.fullName,
                 suite: (assertion.ancestorTitles || []).join(' > ') || path.basename(relativeName),
@@ -78,17 +78,40 @@ export async function POST(req: NextRequest) {
                 failureMessages: assertion.failureMessages || [],
             }));
 
+            // If suite failed before any tests could run (e.g. import or compile error)
+            if (fileResult.status === 'failed' && tests.length === 0 && fileResult.message) {
+                tests = [
+                    {
+                        title: 'Test Suite Execution / Import Error',
+                        fullName: `${relativeName} > Test Suite Execution / Import Error`,
+                        suite: path.basename(relativeName),
+                        status: 'failed',
+                        durationMs: 0,
+                        failureMessages: [fileResult.message],
+                    },
+                ];
+            }
+
             return {
                 name: relativeName,
                 status: fileResult.status,
-                durationMs: fileResult.endTime && fileResult.startTime ? Math.round(fileResult.endTime - fileResult.startTime) : 0,
+                durationMs:
+                    fileResult.endTime && fileResult.startTime
+                        ? Math.round(fileResult.endTime - fileResult.startTime)
+                        : 0,
                 tests,
             };
         });
 
-        const totalTests = parsedJson.numTotalTests || 0;
+        const suitesFailed = suites.filter(
+            (s: any) => s.status === 'failed' && s.tests.some((t: any) => t.status === 'failed')
+        ).length;
+        const totalTests =
+            parsedJson.numTotalTests || suites.reduce((acc: number, s: any) => acc + s.tests.length, 0);
         const passedTests = parsedJson.numPassedTests || 0;
-        const failedTests = parsedJson.numFailedTests || 0;
+        const failedTests =
+            (parsedJson.numFailedTests || 0) +
+            (parsedJson.numTotalTests === 0 && suitesFailed > 0 ? suitesFailed : 0);
         const totalDurationMs = suites.reduce((acc: number, s: any) => acc + s.durationMs, 0);
 
         return NextResponse.json({

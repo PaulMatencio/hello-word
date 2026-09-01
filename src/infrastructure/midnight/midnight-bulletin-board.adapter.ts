@@ -148,7 +148,7 @@ export class MidnightBulletinBoardAdapter implements IBulletinBoardGateway {
             timestamp: new Date().toISOString(),
         });
 
-        // Step 3: Alice Attempts Duplicate Post While Occupied
+        // Step 3: Alice (Owner) Edits Her Post
         const t2 = Date.now();
         const prev2 = currentLedger;
         const aliceCtx2 = createCircuitContext<BulletinBoardPrivateState>(
@@ -158,27 +158,23 @@ export class MidnightBulletinBoardAdapter implements IBulletinBoardGateway {
             session.alicePrivateState
         );
 
-        log('[Step 3] Alice attempts 2nd post while board is OCCUPIED (Expecting assert failure)...');
-        let step3Status: 'expected_error' | 'unexpected_error' = 'unexpected_error';
-        let step3Msg = '';
-
-        try {
-            this.client.post(aliceCtx2, 'Duplicate message should fail');
-            step3Msg = 'UNEXPECTED: Duplicate post succeeded without assertion check.';
-        } catch (err: any) {
-            step3Status = 'expected_error';
-            step3Msg = `Expected assertion error caught: "${err.message || 'failed assert: Attempted to post to an occupied board'}"`;
-            log(`[Step 3] ${step3Msg}`);
-        }
+        const editMsg = 'Updated by Alice: ZK privacy verified!';
+        log(`[Step 3] Alice updating post to: "${editMsg}"...`);
+        const postRes2 = this.client.post(aliceCtx2, editMsg);
+        session.chargedState = postRes2.context.currentQueryContext.state;
+        session.alicePrivateState = postRes2.context.currentPrivateState;
+        currentLedger = this.client.queryLedgerState(session.chargedState);
 
         steps.push({
             stepId: 3,
-            title: 'Duplicate Post Rejection (Alice)',
-            description: 'Asserts that post() circuit strictly rejects submissions when board is already OCCUPIED.',
+            title: 'Owner (Alice) Edits Post',
+            description: 'Owner updates post; sequence increments and owner tag is refreshed for forward unlinkability.',
             identity: 'Alice',
             circuitName: 'post',
-            status: step3Status,
-            message: step3Msg,
+            args: { message: editMsg },
+            status: 'success',
+            message: `Post updated successfully: "${editMsg}"`,
+            details: JSON.stringify({ state: 'OCCUPIED (1)', message: editMsg }),
             previousLedgerState: this.serializeLedgerState(prev2),
             nextLedgerState: this.serializeLedgerState(currentLedger),
             durationMs: Date.now() - t2,

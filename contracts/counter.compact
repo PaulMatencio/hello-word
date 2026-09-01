@@ -1,0 +1,21 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// On-chain counter tracking numeric invocations
+export ledger count: Uint<32>;
+
+constructor() {
+  count = 0;
+}
+
+// Circuit to increment the counter
+export circuit increment(by: Uint<32>): [] {
+  assert(by > 0, "Increment step must be greater than zero");
+  count = (count + disclose(by)) as Uint<32>;
+}
+
+// Circuit to reset counter
+export circuit reset(): [] {
+  count = 0;
+}
