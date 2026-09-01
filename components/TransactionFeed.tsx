@@ -25,6 +25,11 @@ interface TransactionFeedProps {
   transactions: TxRecord[];
 }
 
+const EXPLORER_BASE = process.env.NEXT_PUBLIC_EXPLORER_URL || 'https://explorer.1am.xyz';
+
+export const getTxExplorerUrl = (txHash: string) => `${EXPLORER_BASE}/tx/${txHash}`;
+export const getContractExplorerUrl = (contractAddress: string) => `${EXPLORER_BASE}/contract/${contractAddress}`;
+
 export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -43,11 +48,24 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
-  // Click handler to open explorer / scanner
-  const handleTxClick = useCallback((txHash: string) => {
-    if (!txHash) return;
-    const scannerUrl = `https://midnightscanner.io/transactions/${txHash}?network=preprod`;
-    window.open(scannerUrl, '_blank');
+  // Click handler to open explorer
+  const handleTxClick = useCallback((txHash?: string, contractAddr?: string, isDeploy?: boolean) => {
+    // If it's a deployment and we don't have a distinct txHash, open the contract page in explorer
+    if (isDeploy && (!txHash || txHash === contractAddr || txHash.startsWith('deploy-'))) {
+      if (contractAddr) {
+        window.open(getContractExplorerUrl(contractAddr), '_blank');
+      }
+      return;
+    }
+    // If txHash is valid and distinct from contractAddress
+    if (txHash && txHash !== contractAddr && !txHash.startsWith('deploy-')) {
+      window.open(getTxExplorerUrl(txHash), '_blank');
+      return;
+    }
+    // Fallback if we have a contract address
+    if (contractAddr) {
+      window.open(getContractExplorerUrl(contractAddr), '_blank');
+    }
   }, []);
 
   // If there are no transactions, render an empty state card
@@ -85,12 +103,12 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
 
   return (
     <div className="glass-panel p-6 sm:p-8 relative">
-      {/* Stale scanner warning banner */}
+      {/* Stale explorer warning banner */}
       {isStale && latestTx?.timestamp && (
         <div className="mb-5 p-3 bg-amber-500/10 border border-amber-500/30 text-amber-200 rounded-xl flex items-center text-xs">
           <AlertTriangle className="w-4 h-4 mr-2 text-amber-400 shrink-0" />
           <span>
-            MidnightScanner pre-prod last recorded transaction on{' '}
+            Midnight Preprod Explorer last recorded transaction on{' '}
             <strong>{new Date(latestTx.timestamp).toLocaleDateString()}</strong>. Live status is active on Preprod nodes.
           </span>
         </div>
@@ -104,12 +122,23 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
           </div>
           <div>
             <h3 className="text-base font-bold text-white">Recent Midnight Transactions</h3>
-            <p className="text-xs text-slate-400">Zero-Knowledge proofs and smart contract circuit interactions</p>
+            <p className="text-xs text-slate-400">Zero-Knowledge proofs, contract deployments & circuit interactions</p>
           </div>
         </div>
-        <span className="text-xs text-slate-400 font-mono bg-midnight-950 px-2.5 py-1 rounded-lg border border-white/5">
-          {transactions.length} record{transactions.length !== 1 ? 's' : ''}
-        </span>
+        <div className="flex items-center space-x-2">
+          <a
+            href={EXPLORER_BASE}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden sm:inline-flex items-center space-x-1 text-xs text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 border border-cyan-500/20 px-2.5 py-1 rounded-lg transition-colors"
+          >
+            <span>explorer.1am.xyz</span>
+            <ExternalLink className="h-3 w-3" />
+          </a>
+          <span className="text-xs text-slate-400 font-mono bg-midnight-950 px-2.5 py-1 rounded-lg border border-white/5">
+            {transactions.length} record{transactions.length !== 1 ? 's' : ''}
+          </span>
+        </div>
       </div>
 
       {/* Transaction Cards List */}
@@ -119,11 +148,18 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
           const isTransfer = tx.txType === 'token_transfer' || tx.message?.startsWith('Sent ');
           const isCircuitCall = !isDeploy && !isTransfer;
           const contractAddr = tx.contractAddress || (isDeploy ? tx.txHash : undefined);
+          const isDeployPseudoHash = tx.txHash === contractAddr || (tx.txHash && tx.txHash.startsWith('deploy-'));
+          const realTxHash = tx.txHash && !isDeployPseudoHash ? tx.txHash : undefined;
+          const explorerTargetUrl = realTxHash
+            ? getTxExplorerUrl(realTxHash)
+            : contractAddr
+            ? getContractExplorerUrl(contractAddr)
+            : EXPLORER_BASE;
 
           return (
             <div
               key={tx.id || tx.txHash || idx}
-              onClick={() => handleTxClick(tx.txHash)}
+              onClick={() => handleTxClick(tx.txHash, contractAddr, isDeploy)}
               className="group rounded-xl bg-midnight-950/70 border border-white/5 hover:border-indigo-500/30 p-4 transition-all hover:bg-midnight-900/60 cursor-pointer space-y-3 shadow-sm"
             >
               {/* Row 1: Type badge, Contract info, Circuit info, and Timestamp */}
@@ -162,9 +198,18 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
                       >
                         {contractAddr.slice(0, 8)}...{contractAddr.slice(-6)}
                       </Link>
+                      <a
+                        href={getContractExplorerUrl(contractAddr)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-400 hover:text-cyan-300 ml-0.5 p-0.5"
+                        title={`View contract ${contractAddr} on explorer.1am.xyz`}
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
                       <button
                         onClick={(e) => copyToClipboard(e, contractAddr, `contract-${tx.id || idx}`)}
-                        className="text-slate-400 hover:text-white ml-1"
+                        className="text-slate-400 hover:text-white ml-0.5 p-0.5"
                         title="Copy contract address"
                       >
                         {copiedId === `contract-${tx.id || idx}` ? (
@@ -216,21 +261,45 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   <div className="flex items-center space-x-1 text-slate-400">
                     <span className="text-slate-500 font-sans">Tx:</span>
-                    <span className="text-slate-300" title={tx.txHash}>
-                      {tx.txHash ? `${tx.txHash.slice(0, 12)}...${tx.txHash.slice(-6)}` : 'Pending'}
-                    </span>
-                    {tx.txHash && (
-                      <button
-                        onClick={(e) => copyToClipboard(e, tx.txHash, `tx-${tx.id || idx}`)}
-                        className="text-slate-500 hover:text-white p-0.5"
-                        title="Copy transaction hash"
-                      >
-                        {copiedId === `tx-${tx.id || idx}` ? (
-                          <Check className="h-3 w-3 text-emerald-400" />
-                        ) : (
-                          <Copy className="h-3 w-3" />
-                        )}
-                      </button>
+                    {realTxHash ? (
+                      <div className="flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
+                        <a
+                          href={getTxExplorerUrl(realTxHash)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-cyan-300 hover:text-white underline hover:no-underline font-mono inline-flex items-center gap-1"
+                          title={`View transaction ${realTxHash} on explorer.1am.xyz`}
+                        >
+                          <span>{`${realTxHash.slice(0, 12)}...${realTxHash.slice(-6)}`}</span>
+                          <ExternalLink className="h-2.5 w-2.5 text-cyan-400" />
+                        </a>
+                        <button
+                          onClick={(e) => copyToClipboard(e, realTxHash, `tx-${tx.id || idx}`)}
+                          className="text-slate-500 hover:text-white p-0.5 ml-0.5"
+                          title="Copy transaction hash"
+                        >
+                          {copiedId === `tx-${tx.id || idx}` ? (
+                            <Check className="h-3 w-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="h-3 w-3" />
+                          )}
+                        </button>
+                      </div>
+                    ) : isDeploy && contractAddr ? (
+                      <div className="flex items-center space-x-1" onClick={(e) => e.stopPropagation()}>
+                        <a
+                          href={getContractExplorerUrl(contractAddr)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-purple-300 hover:text-purple-200 italic text-[10px] inline-flex items-center gap-1"
+                          title={`View deployed contract ${contractAddr} on explorer.1am.xyz`}
+                        >
+                          <span>Genesis Deploy Contract</span>
+                          <ExternalLink className="h-2.5 w-2.5 text-purple-400" />
+                        </a>
+                      </div>
+                    ) : (
+                      <span className="text-slate-500 italic text-[10px]">Pending Confirmation</span>
                     )}
                   </div>
 
@@ -258,10 +327,17 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
                   )}
                 </div>
 
-                <div className="flex items-center space-x-1 text-indigo-400 group-hover:text-indigo-300 text-[11px] font-sans">
-                  <span>Explorer</span>
+                <a
+                  href={explorerTargetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center space-x-1 text-indigo-400 hover:text-cyan-300 text-[11px] font-sans transition-colors cursor-pointer"
+                  title={`Open in explorer.1am.xyz: ${explorerTargetUrl}`}
+                >
+                  <span>{isDeploy && !realTxHash ? 'View Contract' : 'View Tx'}</span>
                   <ExternalLink className="h-3 w-3" />
-                </div>
+                </a>
               </div>
             </div>
           );
@@ -270,3 +346,5 @@ export const TransactionFeed: React.FC<TransactionFeedProps> = ({ transactions }
     </div>
   );
 };
+
+

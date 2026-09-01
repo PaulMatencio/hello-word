@@ -68,6 +68,101 @@ A built-in symbolic verification analyzer for mathematically proving contract co
 
 ---
 
+## 🚀 Quickstart: Installation & First-Time Setup
+
+Follow these steps to set up and run the Midnight Compact Studio locally.
+
+### 1. Prerequisites
+
+Before installing, ensure you have the following installed on your machine:
+- **Node.js**: `v22.0.0` or higher (`node -v`)
+- **Docker & Docker Compose**: Required for running the local Midnight Proof Server container
+- **Midnight Compact Compiler** (`compact` CLI ≥ 0.23): *(Optional)* Required only for CLI contract compilation (`npm run compile`). The in-browser Web Studio compiler works directly in the browser!
+- **Google AI Studio API Key**: *(Optional)* Required if using Gemini AI Copilot features. Get a free API key at [Google AI Studio](https://aistudio.google.com/).
+
+---
+
+### 2. Clone and Install Dependencies
+
+```bash
+# Clone the repository
+git clone git@github.com:PaulMatencio/midnight-compact-studio.git
+cd midnight-compact-studio
+
+# Install dependencies
+npm install
+```
+
+---
+
+### 3. Configure Environment Variables
+
+Create a `.env.local` file in the root of the project:
+
+```bash
+cp .env.example .env.local
+```
+
+Key variables configured in `.env.local`:
+```env
+# Optional: Gemini API Key for AI Copilot
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Persistence: 'file' (default, zero-setup) or 'redis-json'
+STORAGE_DRIVER=file
+
+# Private state encryption password (min 16 chars)
+PRIVATE_STATE_PASSWORD=Midnight-Studio-Secret-Key-16+
+```
+
+---
+
+### 4. Start the Local Midnight Proof Server
+
+Midnight generates Zero-Knowledge proofs locally on your machine using the official Midnight Proof Server container:
+
+```bash
+npm run proof-server:start
+```
+> This starts the Docker container `midnightntwrk/proof-server:8.1.0` listening at `http://127.0.0.1:6300`.
+
+---
+
+### 5. Start the Development Server
+
+```bash
+npm run dev
+```
+
+Open your browser and navigate to:
+👉 [**http://localhost:3000**](http://localhost:3000)
+
+---
+
+### 6. First-Time Workflow & Guide
+
+#### 🌟 A. Writing & Testing Smart Contracts (Offline / Local)
+1. Open the **Studio IDE** at [**http://localhost:3000/ide**](http://localhost:3000/ide).
+2. Choose any starter template from the top dropdown (e.g. *Hello World Bulletin Board* or *Stateful Counter*).
+3. Press **`Ctrl+T`** or click **"Run Tests"** to execute lightning-fast circuit unit tests in-memory with Vitest (<100ms).
+4. Click **"Run Formal Verification"** in the **Formal Verification** tab to mathematically evaluate your contract against SMT-LIB2 / Z3 security lemmas.
+5. Use the **AI Copilot** panel on the right to diagnose errors, ask questions, generate TypeScript client SDKs, or scaffold test suites.
+
+#### 💼 B. Wallet Setup & Faucet Funding (For On-Chain Operations)
+*The app works immediately for local development without a wallet. When you are ready to deploy on-chain:*
+1. Navigate to **Wallet** at [**http://localhost:3000/wallet**](http://localhost:3000/wallet).
+2. Click **"Generate New Seed"** or paste your existing 64-character hex seed.
+3. Copy your Bech32 wallet address (`mn_addr_preprod...`).
+4. Request free test tokens from the [Midnight Preprod Faucet](https://faucet.preprod.midnight.network).
+5. Once your `tNIGHT` arrives, click **"Register for DUST"** to generate transaction fee capacity.
+
+#### 🚀 C. Deploying to Midnight Preprod
+1. In the **Studio IDE** (`/ide`), click **"Deploy Contract"** once compiled.
+2. Select your deployed contract in the **Contracts Directory** (`/contracts`) to open its dedicated **Interactive Circuit Workbench** and submit Zero-Knowledge transactions!
+3. Track all executed transactions and deployed contracts on the live block explorer at [**explorer.1am.xyz**](https://explorer.1am.xyz).
+
+---
+
 ## 🏗️ Clean Architecture & Hexagonal Design
 
 This project strictly adheres to **Clean Architecture** and **Domain-Driven Design (DDD)** principles, separating business rules from infrastructure and presentation frameworks:
@@ -335,6 +430,7 @@ Key topics covered:
 ## 🛡️ Architecture & Security
 
 - **Network ID**: `preprod`
+- **Block Explorer**: `https://explorer.1am.xyz`
 - **Indexer GraphQL**: `https://indexer.preprod.midnight.network/api/v4/graphql`
 - **Node RPC**: `https://rpc.preprod.midnight.network`
 - **Local Proof Server**: `http://127.0.0.1:6300` (Docker container running `midnightntwrk/proof-server:8.1.0`)

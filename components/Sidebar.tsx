@@ -19,6 +19,7 @@ import {
   SlidersHorizontal,
   Settings,
 } from 'lucide-react';
+import packageJson from '@/package.json';
 import { useSystem } from '@/src/presentation/context/SystemContext';
 import { useWallet } from '@/src/presentation/context/WalletContext';
 
@@ -117,7 +118,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, onCloseMobile })
           <Link
             href="/"
             className={`flex items-center space-x-3 overflow-hidden group ${isCollapsed ? 'justify-center w-full' : ''}`}
-            title="Midnight Preprod Studio"
+            title={`Midnight Studio v${packageJson.version} (Preprod)`}
           >
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-cyan-400 p-0.5 shadow-lg shadow-indigo-500/25 group-hover:scale-105 transition-transform">
               <div className="flex h-full w-full items-center justify-center rounded-[10px] bg-midnight-950">
@@ -129,11 +130,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, onCloseMobile })
               <div className="flex flex-col min-w-0 transition-opacity duration-200">
                 <div className="flex items-center space-x-2">
                   <span className="text-base font-extrabold tracking-tight text-white truncate">Midnight</span>
-                  <span className="rounded-full bg-indigo-500/20 px-2 py-0.5 text-[10px] font-bold text-indigo-300 border border-indigo-500/30">
-                    Preprod
+                  <span className="rounded-full bg-indigo-500/20 px-1.5 py-0.5 text-[9px] font-mono font-bold text-indigo-300 border border-indigo-500/30">
+                    v{packageJson.version}
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400 truncate">Zero-Knowledge Studio</p>
+                <div className="flex items-center space-x-1.5 text-[11px] text-slate-400">
+                  <span className="truncate">Preprod Studio</span>
+                </div>
               </div>
             )}
           </Link>
@@ -256,6 +259,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, onCloseMobile })
                 <span>Infrastructure Status</span>
                 <Settings className="h-3 w-3" />
               </div>
+            </div>
+          )}
+
+          {/* Version Footer */}
+          {!isCollapsed ? (
+            <div className="flex items-center justify-between px-1 text-[10px] font-mono text-slate-500">
+              <span>Midnight Studio</span>
+              <span className="text-indigo-300 font-semibold bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                v{packageJson.version}
+              </span>
+            </div>
+          ) : (
+            <div className="text-center text-[9px] font-mono text-indigo-400/80" title={`v${packageJson.version}`}>
+              v{packageJson.version.split('-')[0]}
             </div>
           )}
 

@@ -269,7 +269,10 @@ export class MidnightContractAdapter implements IContractGateway {
             initialPrivateState: {},
         });
 
-        const contractAddress = deployed.deployTxData.public.contractAddress;
+        const deployPublicData = deployed.deployTxData.public as any;
+        const contractAddress = deployPublicData.contractAddress;
+        const txHash = deployPublicData.txHash || deployPublicData.txId || null;
+        const blockHeight = typeof deployPublicData.blockHeight === 'number' ? deployPublicData.blockHeight : null;
         const durationMs = Date.now() - startTime;
         const dustPaid = walletCtx.lastDustFee ? walletCtx.lastDustFee.toString() : '0';
 
@@ -294,11 +297,11 @@ export class MidnightContractAdapter implements IContractGateway {
             try {
                 await this.txHistoryStorage.storeTxRecord({
                     id: `deploy-${Date.now()}`,
-                    txHash: contractAddress,
+                    txHash: txHash || `deploy-${contractAddress.slice(0, 16)}`,
                     contractAddress: contractAddress,
                     contractType,
                     txType: 'contract_deploy',
-                    blockHeight: null,
+                    blockHeight,
                     message: `Contract Deployed: ${contractAddress.slice(0, 10)}...`,
                     timestamp: receipt.deployedAt,
                     dustPaid,

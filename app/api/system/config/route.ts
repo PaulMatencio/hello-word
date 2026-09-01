@@ -23,6 +23,7 @@ export async function GET() {
                     nodeRpc: process.env.MIDNIGHT_NODE_RPC || MIDNIGHT_CONFIG.nodeRpc,
                     networkId: process.env.MIDNIGHT_NETWORK_ID || MIDNIGHT_CONFIG.networkId,
                     faucet: process.env.MIDNIGHT_FAUCET || MIDNIGHT_CONFIG.faucet,
+                    explorer: process.env.MIDNIGHT_EXPLORER || MIDNIGHT_CONFIG.explorer,
                 },
                 storage: {
                     driver: (process.env.STORAGE_DRIVER?.trim() as 'file' | 'redis-json') || STORAGE_CONFIG.driver,
