@@ -1,5 +1,3 @@
-'use client';
-
 import React, { useState, useEffect } from 'react';
 import {
   Wallet,
@@ -18,8 +16,10 @@ import {
   PlusCircle,
   Activity,
   Send,
+  Shield,
 } from 'lucide-react';
-// import { sendUnshieldedTNight } from '../src/lib/midnight-service'; // Server-side only function moved to API endpoint
+import { useWallet } from '@/src/presentation/context/WalletContext';
+import { useToast } from '@/src/presentation/context/ToastContext';
 
 interface WalletStudioProps {
   seed: string;
@@ -60,11 +60,25 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
   defaultSeed,
   onOpenSyncDashboard,
 }) => {
+  const toast = useToast();
+  const {
+    connectionMode,
+    setConnectionMode,
+    isExtensionInstalled,
+    isExtensionConnected,
+    extensionAddress,
+    extensionShieldedAddress,
+    extensionNetworkId,
+    connectExtension,
+    disconnectExtension,
+  } = useWallet();
+
   const [showSeed, setShowSeed] = useState(false);
   const [copiedAddr, setCopiedAddr] = useState(false);
   const [copiedSeed, setCopiedSeed] = useState(false);
   const [inputSeed, setInputSeed] = useState(seed);
-const [showSendModal, setShowSendModal] = useState(false);
+  const [isConnectingExtension, setIsConnectingExtension] = useState(false);
+  const [showSendModal, setShowSendModal] = useState(false);
   const [successToast, setSuccessToast] = useState('');
   useEffect(() => {
     if (successToast) {
@@ -91,9 +105,14 @@ const [showSendModal, setShowSendModal] = useState(false);
     setInputSeed(seed);
   }, [seed]);
 
+  const activeDisplayAddress =
+    connectionMode === 'extension' && isExtensionConnected
+      ? extensionAddress || walletStatus?.address
+      : walletStatus?.address;
+
   const handleCopyAddr = () => {
-    if (!walletStatus?.address) return;
-    navigator.clipboard.writeText(walletStatus.address);
+    if (!activeDisplayAddress) return;
+    navigator.clipboard.writeText(activeDisplayAddress);
     setCopiedAddr(true);
     setTimeout(() => setCopiedAddr(false), 2000);
   };
@@ -117,6 +136,7 @@ const [showSendModal, setShowSendModal] = useState(false);
     e.preventDefault();
     if (inputSeed.trim()) {
       setSeed(inputSeed.trim());
+      toast.success('Seed Applied', 'Wallet identity updated');
     }
   };
 
@@ -124,6 +144,19 @@ const [showSendModal, setShowSendModal] = useState(false);
     if (defaultSeed) {
       setSeed(defaultSeed);
       setInputSeed(defaultSeed);
+      toast.info('Default Seed', 'Loaded deployment seed');
+    }
+  };
+
+  const handleConnectExtension = async () => {
+    setIsConnectingExtension(true);
+    try {
+      await connectExtension();
+      toast.success('Wallet Connected', 'Connected to Midnight Lace Extension');
+    } catch (err: any) {
+      toast.error('Connection Failed', err.message || 'Could not connect to extension');
+    } finally {
+      setIsConnectingExtension(false);
     }
   };
 
@@ -145,12 +178,12 @@ const [showSendModal, setShowSendModal] = useState(false);
           <div>
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               Wallet Studio
-              {!walletStatus ? (
+              {!walletStatus && !isExtensionConnected ? (
                 <span className="flex items-center space-x-1.5 rounded-full bg-slate-800 px-2.5 py-0.5 text-[11px] font-medium text-slate-400 border border-white/10">
                   <RefreshCw className="h-3 w-3 animate-spin text-slate-400" />
                   <span>Connecting...</span>
                 </span>
-              ) : walletStatus.isSynced ? (
+              ) : walletStatus?.isSynced || isExtensionConnected ? (
                 <button
                   onClick={onOpenSyncDashboard}
                   className="flex items-center space-x-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-all cursor-pointer"
@@ -173,7 +206,7 @@ const [showSendModal, setShowSendModal] = useState(false);
               )}
             </h3>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
-              <span>Midnight Multi-Role HD Wallet</span>
+              <span>{connectionMode === 'extension' ? 'Midnight Lace Browser Extension (Zero-Seed)' : 'Midnight Multi-Role HD Wallet'}</span>
               {!walletStatus?.isSynced && walletStatus?.syncProgress?.unshielded && (
                 <span className="text-[11px] text-slate-500 font-mono">
                   [Unshielded: {walletStatus.syncProgress.unshielded.percentage}% | Shielded: {walletStatus.syncProgress.shielded?.percentage ?? 0}% | DUST: {walletStatus.syncProgress.dust?.percentage ?? 0}%]
@@ -204,7 +237,7 @@ const [showSendModal, setShowSendModal] = useState(false);
           )}
           <button
             onClick={onRefresh}
-            disabled={isLoading || !seed}
+            disabled={isLoading || (!seed && !isExtensionConnected)}
             className="flex items-center space-x-1.5 rounded-lg bg-midnight-900/80 px-3 py-1.5 text-xs font-medium text-slate-300 border border-white/10 hover:border-purple-500/40 hover:text-white transition-all disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin text-purple-400' : ''}`} />
@@ -213,70 +246,238 @@ const [showSendModal, setShowSendModal] = useState(false);
         </div>
       </div>
 
-      {/* Seed Configuration Bar */}
-      <div className="mt-6">
-        <form onSubmit={handleSaveSeed} className="space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+      {/* Wallet Connection Mode Selector */}
+      <div className="mt-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-midnight-950/90 p-2 rounded-2xl border border-white/10">
+        <div className="flex items-center space-x-2">
+          <button
+            type="button"
+            onClick={() => setConnectionMode('extension')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              connectionMode === 'extension'
+                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-950/40 border border-purple-500/40'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <ShieldCheck className="h-4 w-4 text-cyan-400" />
+            <span>Browser Wallet (Lace Extension)</span>
+            {isExtensionConnected && (
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping ml-1" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setConnectionMode('seed')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              connectionMode === 'seed'
+                ? 'bg-gradient-to-r from-indigo-600 to-cyan-600 text-white shadow-lg shadow-indigo-950/40 border border-indigo-500/40'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Key className="h-4 w-4 text-indigo-400" />
+            <span>Dev Seed Keyring</span>
+          </button>
+        </div>
+
+        <div className="flex items-center space-x-2 px-2">
+          {connectionMode === 'extension' ? (
+            <span className="text-[11px] text-emerald-400 flex items-center space-x-1 font-medium bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              <span>Zero-Seed Security (Extension Isolated)</span>
+            </span>
+          ) : (
+            <span className="text-[11px] text-slate-400 flex items-center space-x-1 font-medium">
               <Key className="h-3.5 w-3.5 text-indigo-400" />
-              <span>Wallet Seed (64 hex characters)</span>
-            </label>
-            <div className="flex items-center space-x-2 text-xs">
-              {defaultSeed && (
+              <span>Headless / Multi-Role Development Mode</span>
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Mode 1: Browser Wallet (Lace Extension) Panel */}
+      {connectionMode === 'extension' ? (
+        <div className="mt-4 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-midnight-950 to-purple-950/40 border border-indigo-500/30 p-6 space-y-5 shadow-xl">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center space-x-3.5">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-500/20 text-purple-400 border border-purple-500/40 shadow-inner">
+                <Shield className="h-6 w-6 text-cyan-300" />
+              </div>
+              <div>
+                <div className="flex items-center space-x-2">
+                  <h4 className="text-base font-bold text-white">Midnight Browser Wallet</h4>
+                  {isExtensionConnected ? (
+                    <span className="rounded-full bg-emerald-500/20 text-emerald-300 px-2.5 py-0.5 text-xs font-semibold border border-emerald-500/40 flex items-center space-x-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>Connected</span>
+                    </span>
+                  ) : isExtensionInstalled ? (
+                    <span className="rounded-full bg-cyan-500/20 text-cyan-300 px-2.5 py-0.5 text-xs font-semibold border border-cyan-500/40">
+                      Lace Detected
+                    </span>
+                  ) : (
+                    <span className="rounded-full bg-amber-500/20 text-amber-300 px-2.5 py-0.5 text-xs font-semibold border border-amber-500/40">
+                      Extension Not Detected
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Sign transactions securely via browser popups. Your seed phrase never leaves your wallet extension.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              {isExtensionConnected ? (
                 <button
                   type="button"
-                  onClick={handleLoadDefaultSeed}
-                  className="text-indigo-400 hover:text-indigo-300 hover:underline"
+                  onClick={disconnectExtension}
+                  className="inline-flex items-center space-x-2 rounded-xl bg-rose-600/20 border border-rose-500/40 hover:bg-rose-600/30 text-rose-300 text-xs font-semibold px-4 py-2.5 transition-all cursor-pointer"
                 >
-                  Use Deployment Seed
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  <span>Disconnect Wallet</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConnectExtension}
+                  disabled={isConnectingExtension}
+                  className="inline-flex items-center space-x-2 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 hover:from-purple-500 hover:to-cyan-400 text-white text-xs font-bold px-5 py-2.5 shadow-lg shadow-purple-950/50 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <Zap className={`h-4 w-4 text-cyan-200 ${isConnectingExtension ? 'animate-spin' : ''}`} />
+                  <span>{isConnectingExtension ? 'Connecting...' : 'Connect Midnight Wallet'}</span>
                 </button>
               )}
-              <button
-                type="button"
-                onClick={handleGenerateSeed}
-                className="text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1"
-              >
-                <PlusCircle className="h-3 w-3" />
-                <span>Generate New</span>
-              </button>
             </div>
           </div>
 
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <input
-                type={showSeed ? 'text' : 'password'}
-                value={inputSeed}
-                onChange={(e) => setInputSeed(e.target.value)}
-                placeholder="Paste 64-character hex seed..."
-                className="w-full rounded-xl bg-midnight-950/80 px-4 py-2.5 text-xs font-mono text-slate-200 border border-white/10 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500/20"
-              />
+          {/* Connected Info */}
+          {isExtensionConnected ? (
+            <div className="rounded-xl bg-midnight-950/80 p-4 border border-white/10 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Connected Preprod Account
+                </span>
+                <span className="text-xs text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                  Network: {extensionNetworkId.toUpperCase()}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 bg-midnight-900/90 p-3 rounded-lg border border-white/5">
+                <p className="font-mono text-xs text-cyan-300 break-all select-all">
+                  {extensionAddress || activeDisplayAddress}
+                </p>
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(extensionAddress || activeDisplayAddress || '');
+                      setCopiedAddr(true);
+                      setTimeout(() => setCopiedAddr(false), 2000);
+                    }}
+                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    title="Copy Address"
+                  >
+                    {copiedAddr ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                  <a
+                    href={`https://explorer.1am.xyz/contract/${extensionAddress || activeDisplayAddress}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                    title="View in Explorer"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 text-indigo-400" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          ) : !isExtensionInstalled ? (
+            <div className="rounded-xl bg-amber-950/30 p-4 border border-amber-500/20 text-xs text-slate-300 flex items-start space-x-3">
+              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-amber-200">Midnight Lace Extension Not Detected</p>
+                <p className="text-slate-400 leading-relaxed">
+                  To connect your Preprod wallet without typing a seed, please install the official Midnight Lace browser extension or enable DApp connections.
+                </p>
+                <div className="pt-2">
+                  <a
+                    href="https://midnight.network"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold hover:bg-amber-500/30 transition-colors"
+                  >
+                    <span>Download Midnight Wallet</span>
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        /* Mode 2: Seed Configuration Bar */
+        <div className="mt-4">
+          <form onSubmit={handleSaveSeed} className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <Key className="h-3.5 w-3.5 text-indigo-400" />
+                <span>Wallet Seed (64 hex characters)</span>
+              </label>
+              <div className="flex items-center space-x-2 text-xs">
+                {defaultSeed && (
+                  <button
+                    type="button"
+                    onClick={handleLoadDefaultSeed}
+                    className="text-indigo-400 hover:text-indigo-300 hover:underline"
+                  >
+                    Use Deployment Seed
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleGenerateSeed}
+                  className="text-cyan-400 hover:text-cyan-300 hover:underline flex items-center gap-1"
+                >
+                  <PlusCircle className="h-3 w-3" />
+                  <span>Generate New</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showSeed ? 'text' : 'password'}
+                  value={inputSeed}
+                  onChange={(e) => setInputSeed(e.target.value)}
+                  placeholder="Paste 64-character hex seed..."
+                  className="w-full rounded-xl bg-midnight-950/80 px-4 py-2.5 text-xs font-mono text-slate-200 border border-white/10 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500/20"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSeed(!showSeed)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                >
+                  {showSeed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <button
+                type="submit"
+                disabled={inputSeed === seed}
+                className="rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-40 transition-all cursor-pointer"
+              >
+                Apply
+              </button>
               <button
                 type="button"
-                onClick={() => setShowSeed(!showSeed)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200"
+                onClick={handleCopySeed}
+                className="rounded-xl bg-white/5 px-3 py-2.5 text-xs text-slate-300 hover:bg-white/10 hover:text-white border border-white/5 cursor-pointer"
+                title="Copy Seed"
               >
-                {showSeed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {copiedSeed ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
               </button>
             </div>
-            <button
-              type="submit"
-              disabled={inputSeed === seed}
-              className="rounded-xl bg-purple-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-purple-500 disabled:opacity-40 transition-all"
-            >
-              Apply
-            </button>
-            <button
-              type="button"
-              onClick={handleCopySeed}
-              className="rounded-xl bg-white/5 px-3 py-2.5 text-xs text-slate-300 hover:bg-white/10 hover:text-white border border-white/5"
-              title="Copy Seed"
-            >
-              {copiedSeed ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
-            </button>
-          </div>
-        </form>
-      </div>
+          </form>
+        </div>
+      )}
 
       {/* Address & Balances Grid */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -284,21 +485,30 @@ const [showSendModal, setShowSendModal] = useState(false);
         <div className="rounded-xl bg-midnight-950/80 p-4 border border-white/5 flex flex-col justify-between">
           <div>
             <span className="text-[11px] font-medium uppercase tracking-wider text-slate-400 block mb-1">
-              Unshielded Address (Bech32)
+              {connectionMode === 'extension' ? 'Connected Preprod Address' : 'Unshielded Address (Bech32)'}
             </span>
             <p className="font-mono text-xs text-slate-200 break-all line-clamp-2">
-              {walletStatus?.address || (seed ? 'Deriving address...' : 'No wallet connected')}
+              {activeDisplayAddress || (seed ? 'Deriving address...' : 'No wallet connected')}
             </p>
           </div>
-          {walletStatus?.address && (
+          {activeDisplayAddress && (
             <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between">
               <button
                 onClick={handleCopyAddr}
-                className="inline-flex items-center space-x-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium"
+                className="inline-flex items-center space-x-1 text-xs text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer"
               >
                 {copiedAddr ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                 <span>{copiedAddr ? 'Copied to Clipboard' : 'Copy Address'}</span>
               </button>
+              <a
+                href={`https://explorer.1am.xyz/contract/${activeDisplayAddress}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center space-x-1 text-xs text-slate-400 hover:text-white transition-colors"
+                title="View in Explorer"
+              >
+                <ExternalLink className="h-3 w-3" />
+              </a>
             </div>
           )}
         </div>

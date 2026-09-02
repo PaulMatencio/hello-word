@@ -2,6 +2,13 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useSystem } from './SystemContext';
+import {
+    isMidnightExtensionInstalled,
+    connectMidnightLaceWallet,
+    MidnightConnectedApi,
+} from '@/src/infrastructure/midnight/midnight-dapp-connector';
+
+export type WalletConnectionMode = 'extension' | 'seed';
 
 export interface WalletStatus {
     unshieldedAddress: string;
@@ -24,6 +31,15 @@ export interface WalletStatus {
 }
 
 interface WalletContextType {
+    connectionMode: WalletConnectionMode;
+    setConnectionMode: (mode: WalletConnectionMode) => void;
+    isExtensionInstalled: boolean;
+    isExtensionConnected: boolean;
+    extensionAddress: string;
+    extensionShieldedAddress: string;
+    extensionNetworkId: string;
+    connectExtension: () => Promise<boolean>;
+    disconnectExtension: () => void;
     seed: string;
     setSeed: (seed: string) => void;
     defaultSeed: string;
@@ -45,6 +61,51 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const [isLoadingWallet, setIsLoadingWallet] = useState<boolean>(false);
     const [isRegisteringDust, setIsRegisteringDust] = useState<boolean>(false);
     const isFetchingRef = useRef(false);
+
+    // Extension Connection State
+    const [connectionMode, setConnectionMode] = useState<WalletConnectionMode>('seed');
+    const [isExtensionInstalled, setIsExtensionInstalled] = useState<boolean>(false);
+    const [isExtensionConnected, setIsExtensionConnected] = useState<boolean>(false);
+    const [extensionAddress, setExtensionAddress] = useState<string>('');
+    const [extensionShieldedAddress, setExtensionShieldedAddress] = useState<string>('');
+    const [extensionNetworkId, setExtensionNetworkId] = useState<string>('preprod');
+    const [, setExtensionApi] = useState<MidnightConnectedApi | null>(null);
+
+    // Check extension detection on client mount
+    useEffect(() => {
+        const checkExtension = () => {
+            const installed = isMidnightExtensionInstalled();
+            setIsExtensionInstalled(installed);
+        };
+        checkExtension();
+        const timeout = setTimeout(checkExtension, 1000);
+        return () => clearTimeout(timeout);
+    }, []);
+
+    // Connect to Midnight Lace Browser Extension (Zero-Seed)
+    const connectExtension = async (): Promise<boolean> => {
+        try {
+            const res = await connectMidnightLaceWallet();
+            setExtensionApi(res.api);
+            setExtensionAddress(res.address);
+            setExtensionShieldedAddress(res.shieldedAddress || '');
+            setExtensionNetworkId(res.networkId || 'preprod');
+            setIsExtensionConnected(true);
+            setConnectionMode('extension');
+            return true;
+        } catch (err: any) {
+            console.error('Failed to connect Midnight extension:', err);
+            throw err;
+        }
+    };
+
+    const disconnectExtension = () => {
+        setExtensionApi(null);
+        setExtensionAddress('');
+        setExtensionShieldedAddress('');
+        setIsExtensionConnected(false);
+        setConnectionMode('seed');
+    };
 
     // Sync seed from default deployment when available
     useEffect(() => {
@@ -134,6 +195,15 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     return (
         <WalletContext.Provider
             value={{
+                connectionMode,
+                setConnectionMode,
+                isExtensionInstalled,
+                isExtensionConnected,
+                extensionAddress,
+                extensionShieldedAddress,
+                extensionNetworkId,
+                connectExtension,
+                disconnectExtension,
                 seed,
                 setSeed,
                 defaultSeed,
@@ -156,3 +226,4 @@ export const useWallet = (): WalletContextType => {
     }
     return context;
 };
+
