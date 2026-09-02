@@ -134,7 +134,7 @@ export class MidnightContractAdapter implements IContractGateway {
             );
         }
 
-        return { ContractClass, HelloWorld: ContractClass, compiledContract, zkConfigPath };
+        return { ContractClass, HelloWorld: ContractClass, compiledContract, zkConfigPath, contractModule };
     }
 
     async storeMessage(seed: string, message: string, contractAddress?: string): Promise<TransactionExecutionReceipt> {
@@ -337,20 +337,44 @@ export class MidnightContractAdapter implements IContractGateway {
             };
         }
 
-        const ledgerFn = (artifacts as any).contractModule?.ledger || (artifacts as any).contractModule?.default?.ledger;
+        const ledgerFn = artifacts.contractModule?.ledger || artifacts.contractModule?.default?.ledger;
         let message = '';
+        let decodedLedger: Record<string, any> | null = null;
+
         if (ledgerFn) {
             try {
                 const ledgerState = ledgerFn(state.data);
-                if (typeof ledgerState?.message === 'string') {
-                    message = ledgerState.message;
-                } else if (ledgerState?.message?.value) {
-                    message = String(ledgerState.message.value);
-                } else if (typeof ledgerState === 'object') {
-                    message = JSON.stringify(ledgerState);
+                if (ledgerState) {
+                    decodedLedger = {};
+                    // Extract message property
+                    if (typeof ledgerState.message === 'string') {
+                        message = ledgerState.message;
+                        decodedLedger.message = ledgerState.message;
+                    } else if (ledgerState.message?.value) {
+                        message = String(ledgerState.message.value);
+                        decodedLedger.message = message;
+                    }
+
+                    // Extract any other ledger properties (e.g. sequence, state, owner)
+                    const protoProps = Object.getOwnPropertyNames(Object.getPrototypeOf(ledgerState) || {});
+                    const ownProps = Object.keys(ledgerState);
+                    const allKeys = Array.from(new Set([...ownProps, ...protoProps]));
+
+                    for (const key of allKeys) {
+                        if (key === 'constructor') continue;
+                        try {
+                            const val = (ledgerState as any)[key];
+                            if (val !== undefined && typeof val !== 'function') {
+                                decodedLedger[key] = val;
+                                if (key === 'message' && !message && typeof val === 'string') {
+                                    message = val;
+                                }
+                            }
+                        } catch {}
+                    }
                 }
             } catch (e) {
-                console.warn('Error extracting ledger message:', e);
+                console.warn('Error extracting ledger message from on-chain state:', e);
             }
         }
 
@@ -358,8 +382,9 @@ export class MidnightContractAdapter implements IContractGateway {
             contractAddress: targetAddress,
             found: true,
             message,
-            raw: state,
+            raw: decodedLedger || { contractStateFound: true },
             lastChecked: new Date().toISOString(),
         };
     }
 }
+

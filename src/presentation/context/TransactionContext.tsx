@@ -39,7 +39,8 @@ export const TransactionProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     const addTransaction = useCallback((tx: TxRecord) => {
         setTransactions((prev) => {
-            if (prev.some((item) => item.txHash === tx.txHash)) return prev;
+            if (tx.txHash && prev.some((item) => item.txHash === tx.txHash)) return prev;
+            if (tx.id && prev.some((item) => item.id === tx.id)) return prev;
             return [tx, ...prev];
         });
     }, []);

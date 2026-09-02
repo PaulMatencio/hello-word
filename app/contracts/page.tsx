@@ -32,6 +32,7 @@ export default function ContractsPage() {
     const [isImportModalOpen, setIsImportModalOpen] = useState<boolean>(false);
     const [importAddress, setImportAddress] = useState<string>('');
     const [importNickname, setImportNickname] = useState<string>('');
+    const [importContractType, setImportContractType] = useState<string>('bulletin-board');
     const [isImporting, setIsImporting] = useState<boolean>(false);
     const [importError, setImportError] = useState<string | null>(null);
 
@@ -73,7 +74,7 @@ export default function ContractsPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     contractAddress: importAddress.trim(),
-                    contractType: 'hello-world',
+                    contractType: importContractType,
                     nickname: importNickname.trim() || undefined,
                 }),
             });
@@ -82,10 +83,11 @@ export default function ContractsPage() {
                 throw new Error(data.error || 'Failed to import contract');
             }
 
-            toast.success('Contract Tracked', `Now tracking ${importNickname || importAddress.slice(0, 10)}...`);
+            toast.success('Contract Tracked', `Now tracking ${importNickname || importAddress.slice(0, 10)}... (${importContractType})`);
             setIsImportModalOpen(false);
             setImportAddress('');
             setImportNickname('');
+            setImportContractType('bulletin-board');
             fetchContracts();
         } catch (err: any) {
             const msg = err.message || 'Error importing contract';
@@ -298,6 +300,20 @@ export default function ContractsPage() {
                                     onChange={(e) => setImportAddress(e.target.value)}
                                     className="w-full rounded-xl bg-midnight-950 border border-white/10 px-3.5 py-2 text-xs text-white font-mono placeholder-slate-500 focus:outline-none focus:border-indigo-500"
                                 />
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className="block text-xs font-medium text-slate-300">
+                                    Contract Blueprint / Type <span className="text-rose-400">*</span>
+                                </label>
+                                <select
+                                    value={importContractType}
+                                    onChange={(e) => setImportContractType(e.target.value)}
+                                    className="w-full rounded-xl bg-midnight-950 border border-white/10 px-3.5 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                >
+                                    <option value="bulletin-board">Midnight Bulletin Board (State Managed ZK)</option>
+                                    <option value="hello-world">Hello World Message Board</option>
+                                </select>
                             </div>
 
                             <div className="space-y-1.5">

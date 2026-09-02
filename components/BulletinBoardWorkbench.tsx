@@ -37,11 +37,13 @@ import type {
 interface BulletinBoardWorkbenchProps {
     contractAddress?: string;
     contractNickname?: string;
+    onTransactionExecuted?: () => void;
 }
 
 export const BulletinBoardWorkbench: React.FC<BulletinBoardWorkbenchProps> = ({
     contractAddress = '00'.repeat(32),
     contractNickname = 'Midnight Bulletin Board',
+    onTransactionExecuted,
 }) => {
     const toast = useToast();
 
@@ -136,6 +138,7 @@ export const BulletinBoardWorkbench: React.FC<BulletinBoardWorkbenchProps> = ({
             setActiveStepIndex(null);
             toast.success('Showcase Pipeline Completed', 'All 6 ZK contract showcases passed successfully.');
             addLog('Showcase pipeline completed with 100% assertions verified.');
+            onTransactionExecuted?.();
         } catch (err: any) {
             console.error('Showcase error:', err);
             toast.error('Showcase Error', err.message);
@@ -169,6 +172,7 @@ export const BulletinBoardWorkbench: React.FC<BulletinBoardWorkbenchProps> = ({
         setShowcaseSteps([]);
         addLog('Board state reset to initial VACANT state at Sequence #1.');
         toast.info('Board Reset', 'Reset to initial state.');
+        onTransactionExecuted?.();
     };
 
     const isOccupied = boardState.state === 1;
@@ -380,63 +384,13 @@ export const BulletinBoardWorkbench: React.FC<BulletinBoardWorkbenchProps> = ({
                                     type="text"
                                     value={customMessage}
                                     onChange={(e) => setCustomMessage(e.target.value)}
-                                    placeholder="Enter message for post() / postMessage() circuits..."
+                                    placeholder="Enter message for postMessage() circuit..."
                                     className="w-full rounded-xl bg-midnight-950 px-3.5 py-2.5 text-xs text-white border border-white/10 focus:border-cyan-500 focus:outline-none placeholder-slate-500"
                                 />
                             </div>
 
                             {/* Circuit Action Buttons */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                                {/* Post Circuit Button */}
-                                <button
-                                    type="button"
-                                    onClick={async () => {
-                                        if (!customMessage.trim()) return;
-                                        setIsExecutingCircuit(true);
-                                        addLog(`[Manual] ${selectedIdentity} executing post("${customMessage}")...`);
-                                        try {
-                                            const res = await fetch('/api/contract/bulletin-board/showcase', {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({
-                                                    action: 'custom_circuit',
-                                                    customAction: 'post',
-                                                    message: customMessage.trim(),
-                                                    identity: selectedIdentity,
-                                                    sessionId: contractAddress,
-                                                }),
-                                            });
-                                            const data = await res.json();
-                                            if (data.success) {
-                                                const ls = data.data?.nextLedgerState;
-                                                if (ls) {
-                                                    setBoardState({
-                                                        state: Number(ls.state),
-                                                        message: ls.message,
-                                                        sequence: Number(ls.sequence),
-                                                        owner: typeof ls.owner === 'string' ? ls.owner : Buffer.from(ls.owner).toString('hex'),
-                                                    });
-                                                }
-                                                addLog(`[Manual] Post confirmed: "${customMessage}"`);
-                                                toast.success('Post Confirmed', `${selectedIdentity} posted to bulletin board.`);
-                                            } else {
-                                                throw new Error(data.error);
-                                            }
-                                        } catch (err: any) {
-                                            addLog(`[Manual Error] Assertion caught: ${err.message}`);
-                                            toast.error('Circuit Assertion Failed', err.message);
-                                        } finally {
-                                            setIsExecutingCircuit(false);
-                                        }
-                                    }}
-                                    disabled={isExecutingCircuit}
-                                    className="flex items-center justify-center space-x-1.5 p-2.5 rounded-xl bg-cyan-600/30 text-cyan-200 hover:bg-cyan-600 hover:text-white border border-cyan-500/40 text-xs font-bold transition-all cursor-pointer shadow-md"
-                                    title="Requires board to be in VACANT state"
-                                >
-                                    <Send className="h-3.5 w-3.5" />
-                                    <span>post()</span>
-                                </button>
-
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                                 {/* PostMessage Circuit Button */}
                                 <button
                                     type="button"
@@ -468,7 +422,8 @@ export const BulletinBoardWorkbench: React.FC<BulletinBoardWorkbenchProps> = ({
                                                     });
                                                 }
                                                 addLog(`[Manual] postMessage confirmed: "${customMessage}"`);
-                                                toast.success('Message Updated', `${selectedIdentity} executed postMessage().`);
+                                                toast.success('Post / Message Confirmed', `${selectedIdentity} executed postMessage().`);
+                                                onTransactionExecuted?.();
                                             } else {
                                                 throw new Error(data.error);
                                             }
@@ -480,7 +435,7 @@ export const BulletinBoardWorkbench: React.FC<BulletinBoardWorkbenchProps> = ({
                                         }
                                     }}
                                     disabled={isExecutingCircuit}
-                                    className="flex items-center justify-center space-x-1.5 p-2.5 rounded-xl bg-purple-600/30 text-purple-200 hover:bg-purple-600 hover:text-white border border-purple-500/40 text-xs font-bold transition-all cursor-pointer shadow-md"
+                                    className="flex items-center justify-center space-x-1.5 p-2.5 rounded-xl bg-cyan-600/30 text-cyan-200 hover:bg-cyan-600 hover:text-white border border-cyan-500/40 text-xs font-bold transition-all cursor-pointer shadow-md"
                                     title="Posts when VACANT, or updates existing message if caller is current owner"
                                 >
                                     <Edit3 className="h-3.5 w-3.5" />
@@ -517,6 +472,7 @@ export const BulletinBoardWorkbench: React.FC<BulletinBoardWorkbenchProps> = ({
                                                 }
                                                 addLog(`[Manual] takeDown() confirmed. Removed message: "${data.data.result}"`);
                                                 toast.success('TakeDown Confirmed', `Post removed: "${data.data.result}"`);
+                                                onTransactionExecuted?.();
                                             } else {
                                                 throw new Error(data.error);
                                             }
@@ -574,15 +530,15 @@ export const BulletinBoardWorkbench: React.FC<BulletinBoardWorkbenchProps> = ({
                                 },
                                 {
                                     id: 3,
-                                    title: '3. Duplicate Post Rejection (Alice)',
-                                    subtitle: 'Enforces assert(ledger.state == State.VACANT)',
+                                    title: '3. Owner (Alice) Edits Post',
+                                    subtitle: 'Alice updates post with forward privacy & sequence advance',
                                     actor: 'Alice',
-                                    type: 'expected_error',
+                                    type: 'success',
                                 },
                                 {
                                     id: 4,
-                                    title: '4. Unauthorized Post Rejection (Bob)',
-                                    subtitle: 'Rejects Bob submission while board is OCCUPIED',
+                                    title: '4. Unauthorized Edit Rejection (Bob)',
+                                    subtitle: 'Rejects Bob postMessage while occupied (not current author)',
                                     actor: 'Bob',
                                     type: 'expected_error',
                                 },

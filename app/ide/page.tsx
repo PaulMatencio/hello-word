@@ -572,8 +572,8 @@ import CompactStandardLibrary;
         }
     };
 
-    // Run Circuit Unit Tests
-    const handleRunTests = async () => {
+    // Run Circuit Unit Tests (Current Contract or All Available Tests)
+    const handleRunTests = async (runAll: boolean = false) => {
         setIsRunningTests(true);
         setActiveTab('tests');
         try {
@@ -584,6 +584,7 @@ import CompactStandardLibrary;
                 body: JSON.stringify({
                     contractType: cleanContractName,
                     filename,
+                    all: runAll,
                 }),
             });
             const data = await res.json();
@@ -591,9 +592,15 @@ import CompactStandardLibrary;
                 throw new Error(data.error || 'Failed to run circuit tests');
             }
             setTestResult(data.data);
-            if (data.data.failedTests === 0) {
+
+            if (data.data.testAvailable === false) {
+                toast.info(
+                    'No Tests Available',
+                    `No test suite found for ${filename}. Click below to generate tests with AI Copilot.`
+                );
+            } else if (data.data.failedTests === 0) {
                 toast.success(
-                    'Circuit Tests Passed!',
+                    runAll ? 'All Project Tests Passed!' : 'Circuit Tests Passed!',
                     `All ${data.data.totalTests} test(s) passed in ${data.data.totalDurationMs}ms.`
                 );
             } else {
@@ -952,12 +959,29 @@ import CompactStandardLibrary;
                         )}
                     </button>
 
-                    {/* Run Tests Button (Ctrl+T) */}
+                    {/* Highly Visible AI Copilot Button */}
                     <button
-                        onClick={handleRunTests}
+                        onClick={() => setActiveTab('ai')}
+                        className={`inline-flex items-center space-x-2 rounded-xl px-4 py-2 text-xs font-bold shadow-lg transition-all cursor-pointer ${
+                            activeTab === 'ai'
+                                ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 text-white shadow-indigo-500/30 scale-[1.02] ring-2 ring-indigo-400'
+                                : 'bg-gradient-to-r from-purple-600/40 via-indigo-600/40 to-cyan-500/40 text-indigo-100 border border-indigo-500/60 hover:from-purple-600 hover:to-cyan-500 hover:text-white shadow-indigo-950/50 hover:scale-[1.02]'
+                        }`}
+                        title="Open Gemini 3.7 Flash AI Copilot"
+                    >
+                        <Sparkles className="h-4 w-4 text-cyan-300 animate-pulse" />
+                        <span>AI Copilot</span>
+                        <span className="rounded-full bg-cyan-400/20 text-cyan-200 text-[10px] px-1.5 py-0.2 border border-cyan-400/40 font-mono">
+                            3.7 Flash
+                        </span>
+                    </button>
+
+                    {/* 3. Run Tests for Current Contract (Ctrl+T) */}
+                    <button
+                        onClick={() => handleRunTests(false)}
                         disabled={isRunningTests || isCompiling}
                         className="inline-flex items-center space-x-1.5 rounded-xl bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 px-3.5 py-2 text-xs font-bold shadow-lg shadow-emerald-950/30 hover:bg-emerald-600/40 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-                        title="Run Vitest circuit unit tests (Ctrl+T)"
+                        title={`Run circuit unit tests for ${filename} (Ctrl+T)`}
                     >
                         {isRunningTests ? (
                             <>
@@ -972,7 +996,7 @@ import CompactStandardLibrary;
                         )}
                     </button>
 
-                    {/* Formal Verification Button (SMT / Z3) */}
+                    {/* 4. Formal Verification Button (SMT / Z3) */}
                     <button
                         onClick={handleRunFormalVerification}
                         disabled={isVerifying || isCompiling}
@@ -992,24 +1016,7 @@ import CompactStandardLibrary;
                         )}
                     </button>
 
-                    {/* Highly Visible AI Copilot Button */}
-                    <button
-                        onClick={() => setActiveTab('ai')}
-                        className={`inline-flex items-center space-x-2 rounded-xl px-4 py-2 text-xs font-bold shadow-lg transition-all cursor-pointer ${
-                            activeTab === 'ai'
-                                ? 'bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 text-white shadow-indigo-500/30 scale-[1.02] ring-2 ring-indigo-400'
-                                : 'bg-gradient-to-r from-purple-600/40 via-indigo-600/40 to-cyan-500/40 text-indigo-100 border border-indigo-500/60 hover:from-purple-600 hover:to-cyan-500 hover:text-white shadow-indigo-950/50 hover:scale-[1.02]'
-                        }`}
-                        title="Open Gemini 3.7 Flash AI Copilot"
-                    >
-                        <Sparkles className="h-4 w-4 text-cyan-300 animate-pulse" />
-                        <span>AI Copilot</span>
-                        <span className="rounded-full bg-cyan-400/20 text-cyan-200 text-[10px] px-1.5 py-0.2 border border-cyan-400/40 font-mono">
-                            3.7 Flash
-                        </span>
-                    </button>
-
-                    {/* Deploy Button */}
+                    {/* 5. Deploy Button */}
                     <Link
                         href={`/deploy?contract=${encodeURIComponent(filename.replace(/\.compact$/, ''))}`}
                         className="inline-flex items-center space-x-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 px-3.5 py-2 text-xs font-bold text-white shadow-lg shadow-purple-950/30 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
@@ -1018,6 +1025,17 @@ import CompactStandardLibrary;
                         <Rocket className="h-3.5 w-3.5" />
                         <span>Deploy</span>
                     </Link>
+
+                    {/* 6. Run All Available Tests */}
+                    <button
+                        onClick={() => handleRunTests(true)}
+                        disabled={isRunningTests || isCompiling}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900/90 text-emerald-300 border border-emerald-500/30 hover:border-emerald-500/60 px-3 py-2 text-xs font-medium hover:bg-emerald-950/40 hover:text-emerald-200 transition-all disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                        title="Run all available test suites across the repository"
+                    >
+                        <FlaskConical className="h-3.5 w-3.5 text-emerald-400" />
+                        <span>All Tests</span>
+                    </button>
                 </div>
             </div>
 
@@ -1514,119 +1532,166 @@ import CompactStandardLibrary;
                         {activeTab === 'tests' && (
                             <div className="space-y-4">
                                 {testResult ? (
-                                    <div className="space-y-4">
-                                        {/* Test Suite Summary Banner */}
-                                        <div
-                                            className={`rounded-xl p-4 border ${
-                                                testResult.failedTests === 0
-                                                    ? 'bg-emerald-950/40 border-emerald-500/30'
-                                                    : 'bg-rose-950/40 border-rose-500/30'
-                                            }`}
-                                        >
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center space-x-2.5">
-                                                    {testResult.failedTests === 0 ? (
-                                                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                                            <CheckCircle2 className="h-5 w-5" />
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/30">
-                                                            <AlertCircle className="h-5 w-5" />
-                                                        </div>
-                                                    )}
-                                                    <div>
-                                                        <h4 className="text-sm font-bold text-white">
-                                                            {testResult.failedTests === 0
-                                                                ? 'All Circuit Tests Passed'
-                                                                : `${testResult.failedTests} of ${testResult.totalTests} Tests Failed`}
-                                                        </h4>
-                                                        <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
-                                                            {testResult.targetTestFile || 'tests/contracts/'}
-                                                        </p>
-                                                    </div>
-                                                </div>
-
+                                    testResult.testAvailable === false ? (
+                                        <div className="flex flex-col items-center justify-center p-8 text-center rounded-2xl bg-midnight-950/70 border border-amber-500/30 space-y-4 min-h-[320px]">
+                                            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/30 shadow-inner">
+                                                <FlaskConical className="h-7 w-7" />
+                                            </div>
+                                            <div className="space-y-1.5 max-w-md">
+                                                <h4 className="text-base font-bold text-white">
+                                                    No Test Suite Found for <span className="text-amber-300 font-mono">{filename}</span>
+                                                </h4>
+                                                <p className="text-xs text-slate-300 leading-relaxed">
+                                                    There is no test file at <code className="text-cyan-300 font-mono bg-white/5 px-1.5 py-0.5 rounded">{testResult.targetTestFile}</code> yet. You can automatically generate a complete Vitest unit test suite using the AI Copilot.
+                                                </p>
+                                            </div>
+                                            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                                                 <button
-                                                    onClick={handleRunTests}
-                                                    disabled={isRunningTests}
-                                                    className="inline-flex items-center space-x-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-3 py-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                                                    onClick={() => setActiveTab('ai')}
+                                                    className="inline-flex items-center space-x-2 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-cyan-500 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-indigo-500/25 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
                                                 >
-                                                    <RefreshCw className={`h-3 w-3 ${isRunningTests ? 'animate-spin' : ''}`} />
-                                                    <span>Re-run</span>
+                                                    <Sparkles className="h-4 w-4 text-cyan-200" />
+                                                    <span>Generate Tests with AI Copilot</span>
+                                                </button>
+                                                <button
+                                                    onClick={() => handleRunTests(true)}
+                                                    disabled={isRunningTests}
+                                                    className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 border border-emerald-500/30 px-3.5 py-2 text-xs font-semibold text-emerald-300 hover:bg-midnight-800 hover:border-emerald-500/60 transition-colors cursor-pointer disabled:opacity-50"
+                                                >
+                                                    <FlaskConical className="h-3.5 w-3.5" />
+                                                    <span>Run All Available Tests</span>
                                                 </button>
                                             </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            {/* Test Suite Summary Banner */}
+                                            <div
+                                                className={`rounded-xl p-4 border ${
+                                                    testResult.failedTests === 0
+                                                        ? 'bg-emerald-950/40 border-emerald-500/30'
+                                                        : 'bg-rose-950/40 border-rose-500/30'
+                                                }`}
+                                            >
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center space-x-2.5">
+                                                        {testResult.failedTests === 0 ? (
+                                                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                                                <CheckCircle2 className="h-5 w-5" />
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                                                                <AlertCircle className="h-5 w-5" />
+                                                            </div>
+                                                        )}
+                                                        <div>
+                                                            <h4 className="text-sm font-bold text-white">
+                                                                {testResult.failedTests === 0
+                                                                    ? testResult.isAllTests
+                                                                        ? 'All Available Tests Passed'
+                                                                        : `${testResult.contractType || filename} Tests Passed`
+                                                                    : `${testResult.failedTests} of ${testResult.totalTests} Tests Failed`}
+                                                            </h4>
+                                                            <p className="text-[11px] text-slate-400 mt-0.5 font-mono">
+                                                                {testResult.targetTestFile || 'tests/contracts/'}
+                                                            </p>
+                                                        </div>
+                                                    </div>
 
-                                            {/* Summary Stats Row */}
-                                            <div className="grid grid-cols-4 gap-2 mt-4 pt-3 border-t border-white/10 text-center">
-                                                <div className="bg-midnight-950/70 p-2 rounded-lg border border-white/5">
-                                                    <div className="text-[10px] uppercase font-semibold text-slate-400">Total</div>
-                                                    <div className="text-sm font-bold text-white">{testResult.totalTests}</div>
+                                                    <div className="flex items-center space-x-2">
+                                                        <button
+                                                            onClick={() => handleRunTests(false)}
+                                                            disabled={isRunningTests}
+                                                            className="inline-flex items-center space-x-1.5 rounded-lg bg-emerald-600/30 border border-emerald-500/40 hover:bg-emerald-600/50 text-emerald-200 text-xs font-semibold px-3 py-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                                                            title={`Run tests for ${filename}`}
+                                                        >
+                                                            <RefreshCw className={`h-3 w-3 ${isRunningTests ? 'animate-spin' : ''}`} />
+                                                            <span>Run {filename.replace(/\.compact$/, '')}</span>
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleRunTests(true)}
+                                                            disabled={isRunningTests}
+                                                            className="inline-flex items-center space-x-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-semibold px-3 py-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                                                            title="Run all test suites across the project"
+                                                        >
+                                                            <FlaskConical className="h-3 w-3 text-cyan-400" />
+                                                            <span>Run All</span>
+                                                        </button>
+                                                    </div>
                                                 </div>
-                                                <div className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">
-                                                    <div className="text-[10px] uppercase font-semibold text-emerald-400">Passed</div>
-                                                    <div className="text-sm font-bold text-emerald-300">{testResult.passedTests}</div>
-                                                </div>
-                                                <div className="bg-rose-500/10 p-2 rounded-lg border border-rose-500/20">
-                                                    <div className="text-[10px] uppercase font-semibold text-rose-400">Failed</div>
-                                                    <div className="text-sm font-bold text-rose-300">{testResult.failedTests}</div>
-                                                </div>
-                                                <div className="bg-midnight-950/70 p-2 rounded-lg border border-white/5">
-                                                    <div className="text-[10px] uppercase font-semibold text-slate-400">Duration</div>
-                                                    <div className="text-sm font-bold text-cyan-300">{testResult.totalDurationMs}ms</div>
+
+                                                {/* Summary Stats Row */}
+                                                <div className="grid grid-cols-4 gap-2 mt-4 pt-3 border-t border-white/10 text-center">
+                                                    <div className="bg-midnight-950/70 p-2 rounded-lg border border-white/5">
+                                                        <div className="text-[10px] uppercase font-semibold text-slate-400">Total</div>
+                                                        <div className="text-sm font-bold text-white">{testResult.totalTests}</div>
+                                                    </div>
+                                                    <div className="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">
+                                                        <div className="text-[10px] uppercase font-semibold text-emerald-400">Passed</div>
+                                                        <div className="text-sm font-bold text-emerald-300">{testResult.passedTests}</div>
+                                                    </div>
+                                                    <div className="bg-rose-500/10 p-2 rounded-lg border border-rose-500/20">
+                                                        <div className="text-[10px] uppercase font-semibold text-rose-400">Failed</div>
+                                                        <div className="text-sm font-bold text-rose-300">{testResult.failedTests}</div>
+                                                    </div>
+                                                    <div className="bg-midnight-950/70 p-2 rounded-lg border border-white/5">
+                                                        <div className="text-[10px] uppercase font-semibold text-slate-400">Duration</div>
+                                                        <div className="text-sm font-bold text-cyan-300">{testResult.totalDurationMs}ms</div>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
 
-                                        {/* Test Suites and Test Cases */}
-                                        <div className="space-y-3">
-                                            {testResult.suites?.map((suite: any, idx: number) => (
-                                                <div key={idx} className="rounded-xl bg-midnight-950/80 border border-white/10 overflow-hidden">
-                                                    <div className="flex items-center justify-between bg-midnight-900/90 px-3.5 py-2.5 border-b border-white/5">
-                                                        <div className="flex items-center space-x-2">
-                                                            <FlaskConical className="h-3.5 w-3.5 text-cyan-400" />
-                                                            <span className="font-mono text-xs font-semibold text-slate-200">{suite.name}</span>
-                                                        </div>
-                                                        <span className="text-[10px] text-slate-400 font-mono">{suite.durationMs}ms</span>
-                                                    </div>
-
-                                                    <div className="divide-y divide-white/5 p-1">
-                                                        {suite.tests?.map((testCase: any, tIdx: number) => (
-                                                            <div key={tIdx} className="p-2.5 rounded-lg hover:bg-white/[0.02] transition-colors space-y-1.5">
-                                                                <div className="flex items-start justify-between gap-2">
-                                                                    <div className="flex items-start space-x-2">
-                                                                        {testCase.status === 'passed' ? (
-                                                                            <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                                                                        ) : (
-                                                                            <AlertCircle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
-                                                                        )}
-                                                                        <div>
-                                                                            <p className="text-xs font-medium text-slate-200 leading-snug">
-                                                                                {testCase.title}
-                                                                            </p>
-                                                                            <span className="text-[10px] text-slate-500 font-mono">
-                                                                                {testCase.suite}
-                                                                            </span>
-                                                                        </div>
-                                                                    </div>
-                                                                    <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-white/5 px-2 py-0.5 rounded">
-                                                                        {testCase.durationMs}ms
-                                                                    </span>
-                                                                </div>
-
-                                                                {testCase.failureMessages?.length > 0 && (
-                                                                    <div className="mt-2 p-2.5 rounded-lg bg-rose-950/50 border border-rose-500/30 text-rose-200 font-mono text-[11px] whitespace-pre-wrap overflow-x-auto">
-                                                                        {testCase.failureMessages.join('\n')}
-                                                                    </div>
-                                                                )}
+                                            {/* Test Suites and Test Cases */}
+                                            <div className="space-y-3">
+                                                {testResult.suites?.map((suite: any, idx: number) => (
+                                                    <div key={idx} className="rounded-xl bg-midnight-950/80 border border-white/10 overflow-hidden">
+                                                        <div className="flex items-center justify-between bg-midnight-900/90 px-3.5 py-2.5 border-b border-white/5">
+                                                            <div className="flex items-center space-x-2">
+                                                                <FlaskConical className="h-3.5 w-3.5 text-cyan-400" />
+                                                                <span className="font-mono text-xs font-semibold text-slate-200">{suite.name}</span>
                                                             </div>
-                                                        ))}
+                                                            <span className="text-[10px] text-slate-400 font-mono">{suite.durationMs}ms</span>
+                                                        </div>
+
+                                                        <div className="divide-y divide-white/5 p-1">
+                                                            {suite.tests?.map((testCase: any, tIdx: number) => (
+                                                                <div key={tIdx} className="p-2.5 rounded-lg hover:bg-white/[0.02] transition-colors space-y-1.5">
+                                                                    <div className="flex items-start justify-between gap-2">
+                                                                        <div className="flex items-start space-x-2">
+                                                                            {testCase.status === 'passed' ? (
+                                                                                <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                                                                            ) : (
+                                                                                <AlertCircle className="h-4 w-4 text-rose-400 shrink-0 mt-0.5" />
+                                                                            )}
+                                                                            <div>
+                                                                                <p className="text-xs font-medium text-slate-200 leading-snug">
+                                                                                    {testCase.title}
+                                                                                </p>
+                                                                                <span className="text-[10px] text-slate-500 font-mono">
+                                                                                    {testCase.suite}
+                                                                                </span>
+                                                                            </div>
+                                                                        </div>
+                                                                        <span className="text-[10px] text-slate-400 font-mono shrink-0 bg-white/5 px-2 py-0.5 rounded">
+                                                                            {testCase.durationMs}ms
+                                                                        </span>
+                                                                    </div>
+
+                                                                    {testCase.failureMessages?.length > 0 && (
+                                                                        <div className="mt-2 p-2.5 rounded-lg bg-rose-950/50 border border-rose-500/30 text-rose-200 font-mono text-[11px] whitespace-pre-wrap overflow-x-auto">
+                                                                            {testCase.failureMessages.join('\n')}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
+                                    )
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center p-8 text-center rounded-xl bg-midnight-950/40 border border-white/5 space-y-3 min-h-[300px]">
+                                    <div className="flex flex-col items-center justify-center p-8 text-center rounded-xl bg-midnight-950/40 border border-white/5 space-y-4 min-h-[300px]">
                                         <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                             <FlaskConical className="h-6 w-6" />
                                         </div>
@@ -1636,14 +1701,24 @@ import CompactStandardLibrary;
                                                 Execute circuit unit tests in-memory to verify Compact assertions, witness execution, and state transitions.
                                             </p>
                                         </div>
-                                        <button
-                                            onClick={handleRunTests}
-                                            disabled={isRunningTests}
-                                            className="inline-flex items-center space-x-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-950/40 hover:bg-emerald-500 transition-colors cursor-pointer"
-                                        >
-                                            <Play className="h-3.5 w-3.5 fill-current" />
-                                            <span>{isRunningTests ? 'Running Tests...' : 'Run Circuit Unit Tests (Ctrl+T)'}</span>
-                                        </button>
+                                        <div className="flex flex-wrap items-center justify-center gap-3">
+                                            <button
+                                                onClick={() => handleRunTests(false)}
+                                                disabled={isRunningTests}
+                                                className="inline-flex items-center space-x-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-950/40 hover:bg-emerald-500 transition-colors cursor-pointer"
+                                            >
+                                                <Play className="h-3.5 w-3.5 fill-current" />
+                                                <span>{isRunningTests ? 'Running Tests...' : `Run ${filename.replace(/\.compact$/, '')} Tests (Ctrl+T)`}</span>
+                                            </button>
+                                            <button
+                                                onClick={() => handleRunTests(true)}
+                                                disabled={isRunningTests}
+                                                className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 border border-emerald-500/30 px-3.5 py-2 text-xs font-semibold text-emerald-300 hover:bg-midnight-800 hover:border-emerald-500/60 transition-colors cursor-pointer"
+                                            >
+                                                <FlaskConical className="h-3.5 w-3.5" />
+                                                <span>Run All Available Tests</span>
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
                             </div>

@@ -58,7 +58,7 @@ describe('Clean Architecture: Bulletin Board Use Cases & Adapter', () => {
             message: 'Clean Architecture First Post',
         });
 
-        expect(postRes.action).toBe('post');
+        expect(postRes.action).toBe('postMessage');
         expect(postRes.nextLedgerState?.state).toBe(1); // OCCUPIED
         expect(postRes.nextLedgerState?.message.value).toBe('Clean Architecture First Post');
 

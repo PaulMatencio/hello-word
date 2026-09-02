@@ -40,15 +40,15 @@ export const CONTRACT_BLUEPRINTS: Record<string, ContractBlueprint> = {
         version: '1.0.0',
         circuits: [
             {
-                name: 'post',
-                displayName: 'Post Message',
-                description: 'Post a new message to the bulletin board when state is VACANT.',
+                name: 'postMessage',
+                displayName: 'Post / Edit Message',
+                description: 'Post a new message when VACANT, or update the existing message if you are the current author.',
                 params: [
                     {
                         name: 'newMessage',
                         type: 'string',
-                        label: 'New Message',
-                        placeholder: 'Enter message to pin to the bulletin board...',
+                        label: 'Message',
+                        placeholder: 'Enter message to post or update on the bulletin board...',
                         required: true,
                     },
                 ],

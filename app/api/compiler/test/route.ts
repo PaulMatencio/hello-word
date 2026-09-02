@@ -20,15 +20,31 @@ export async function POST(req: NextRequest) {
         }
         contractType = path.basename(contractType);
 
+        const runAll = Boolean(body.all);
         let targetTestFile = '';
-        if (contractType) {
+
+        if (!runAll && contractType) {
             const specificPath = path.resolve(process.cwd(), 'tests', 'contracts', `${contractType}.test.ts`);
             try {
                 await fs.access(specificPath);
                 targetTestFile = `tests/contracts/${contractType}.test.ts`;
             } catch {
-                // If specific contract test doesn't exist, fallback to all tests
-                targetTestFile = 'tests/';
+                return NextResponse.json({
+                    success: true,
+                    data: {
+                        testAvailable: false,
+                        isAllTests: false,
+                        contractType,
+                        targetTestFile: `tests/contracts/${contractType}.test.ts`,
+                        message: `No test suite found for ${contractType}.test.ts. You can generate a comprehensive test suite using the AI Copilot.`,
+                        totalTests: 0,
+                        passedTests: 0,
+                        failedTests: 0,
+                        totalDurationMs: 0,
+                        suites: [],
+                        timestamp: new Date().toISOString(),
+                    },
+                });
             }
         } else {
             targetTestFile = 'tests/';
@@ -117,6 +133,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({
             success: true,
             data: {
+                testAvailable: true,
+                isAllTests: runAll,
+                contractType,
                 totalTests,
                 passedTests,
                 failedTests,

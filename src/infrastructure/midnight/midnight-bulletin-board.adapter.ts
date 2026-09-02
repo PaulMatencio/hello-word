@@ -124,7 +124,7 @@ export class MidnightBulletinBoardAdapter implements IBulletinBoardGateway {
 
         const msg1 = 'Hello Midnight Zero-Knowledge World!';
         log(`[Step 2] Alice posting message: "${msg1}"...`);
-        const postRes1 = this.client.post(aliceCtx1, msg1);
+        const postRes1 = this.client.postMessage(aliceCtx1, msg1);
         session.chargedState = postRes1.context.currentQueryContext.state;
         session.alicePrivateState = postRes1.context.currentPrivateState;
         currentLedger = this.client.queryLedgerState(session.chargedState);
@@ -137,7 +137,7 @@ export class MidnightBulletinBoardAdapter implements IBulletinBoardGateway {
             title: 'Alice Posts Message',
             description: 'Alice generates ZK proof, transitions board to OCCUPIED, and records owner commitment hash.',
             identity: 'Alice',
-            circuitName: 'post',
+            circuitName: 'postMessage',
             args: { message: msg1 },
             status: 'success',
             message: `Message posted successfully: "${msg1}"`,
@@ -160,7 +160,7 @@ export class MidnightBulletinBoardAdapter implements IBulletinBoardGateway {
 
         const editMsg = 'Updated by Alice: ZK privacy verified!';
         log(`[Step 3] Alice updating post to: "${editMsg}"...`);
-        const postRes2 = this.client.post(aliceCtx2, editMsg);
+        const postRes2 = this.client.postMessage(aliceCtx2, editMsg);
         session.chargedState = postRes2.context.currentQueryContext.state;
         session.alicePrivateState = postRes2.context.currentPrivateState;
         currentLedger = this.client.queryLedgerState(session.chargedState);
@@ -170,7 +170,7 @@ export class MidnightBulletinBoardAdapter implements IBulletinBoardGateway {
             title: 'Owner (Alice) Edits Post',
             description: 'Owner updates post; sequence increments and owner tag is refreshed for forward unlinkability.',
             identity: 'Alice',
-            circuitName: 'post',
+            circuitName: 'postMessage',
             args: { message: editMsg },
             status: 'success',
             message: `Post updated successfully: "${editMsg}"`,
@@ -191,25 +191,25 @@ export class MidnightBulletinBoardAdapter implements IBulletinBoardGateway {
             session.bobPrivateState
         );
 
-        log('[Step 4] Bob attempts to post while board is OCCUPIED (Expecting assert failure)...');
+        log('[Step 4] Bob attempts to edit/overwrite Alice post while OCCUPIED (Expecting assert failure)...');
         let step4Status: 'expected_error' | 'unexpected_error' = 'unexpected_error';
         let step4Msg = '';
 
         try {
-            this.client.post(bobCtx1, 'Bob message on occupied board');
+            this.client.postMessage(bobCtx1, 'Bob message on occupied board');
             step4Msg = 'UNEXPECTED: Bob was able to post to occupied board.';
         } catch (err: any) {
             step4Status = 'expected_error';
-            step4Msg = `Expected assertion error caught: "${err.message || 'failed assert: Attempted to post to an occupied board'}"`;
+            step4Msg = `Expected assertion error caught: "${err.message || 'failed assert: Only the current owner can edit the post'}"`;
             log(`[Step 4] ${step4Msg}`);
         }
 
         steps.push({
             stepId: 4,
-            title: 'Unauthorized Post Rejection (Bob)',
-            description: 'Third-party (Bob) attempts to overwrite board; circuit enforces State.VACANT rule.',
+            title: 'Unauthorized Edit Rejection (Bob)',
+            description: 'Third-party (Bob) attempts to overwrite board; circuit enforces owner authorization check.',
             identity: 'Bob',
-            circuitName: 'post',
+            circuitName: 'postMessage',
             status: step4Status,
             message: step4Msg,
             previousLedgerState: this.serializeLedgerState(prev3),
@@ -331,26 +331,7 @@ export class MidnightBulletinBoardAdapter implements IBulletinBoardGateway {
             callerPrivateState
         );
 
-        if (action === 'post') {
-            const postText = message || 'Custom Bulletin Board Post';
-            const postRes = this.client.post(circuitCtx, postText);
-            session.chargedState = postRes.context.currentQueryContext.state;
-            if (identity === 'Alice') {
-                session.alicePrivateState = postRes.context.currentPrivateState;
-            } else if (identity === 'Bob') {
-                session.bobPrivateState = postRes.context.currentPrivateState;
-            }
-            const nextLedger = this.client.queryLedgerState(session.chargedState);
-
-            return {
-                action: 'post',
-                result: postRes.result,
-                nextLedgerState: this.serializeLedgerState(nextLedger),
-                message: `Successfully executed post("${postText}")`,
-            };
-        }
-
-        if (action === 'postMessage') {
+        if (action === 'post' || action === 'postMessage') {
             const postText = message || 'Custom Bulletin Board Post';
             const postRes = this.client.postMessage(circuitCtx, postText);
             session.chargedState = postRes.context.currentQueryContext.state;

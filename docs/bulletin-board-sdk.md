@@ -1,4 +1,6 @@
-# Technical Documentation & Client SDK: Bulletin Board Contract
+# Midnight Bulletin Board: Smart Contract & TypeScript SDK Documentation
+
+This document provides technical documentation, architecture specifications, API references, and a production-grade TypeScript client SDK implementation for the **Midnight Bulletin Board** smart contract (`bulletin-board.compact`).
 
 ---
 
@@ -6,93 +8,118 @@
 
 ### 1. Contract Overview & Architecture
 
-The `BulletinBoard` contract implements a decentralized, privacy-preserving bulletin board on the Midnight blockchain. It allows users to claim a vacant board, post messages, update messages if they are the current owner, and take down active posts while maintaining forward unlinkability and zero-knowledge ownership verification.
+The **Bulletin Board** contract is a decentralized, zero-knowledge bulletin board on the Midnight blockchain. It allows users to claim a vacant board, post messages, update their existing post, and take posts down. 
+
+ZK ownership verification ensures that while the owner's verification tag is public, the owner's actual public identity or secret key is never revealed on the public ledger. Each time a post is created or updated, the owner verification tag rotates with the advancing sequence counter to ensure **forward privacy and unlinkability**.
+
+```
+                           ┌────────────────────────┐
+                           │    Bulletin Board      │
+                           │     State Machine      │
+                           └───────────┬────────────┘
+                                       │
+                    constructor()      ▼
+                  ┌──────────────────────────────────┐
+                  │          State: VACANT           │
+                  │  sequence: 1, owner: 0x00...00   │
+                  │         message: none()          │
+                  └───────────────┬──────────────────┘
+                                  │
+      postMessage("Hello")        │       takeDown() (Owner)
+  [Derives tag via witness sk]    │   [Verifies ownership tag]
+                                  ▼
+                  ┌──────────────────────────────────┐
+                  │         State: OCCUPIED          │
+                  │  sequence: 2, owner: tag(sk, 1)  │
+                  │       message: some("Hello")     │
+                  └───────────────┬──────────────────┘
+                                  │
+                                  │ postMessage("Updated") (Owner)
+                                  │ [Verifies tag(sk, 1), advances seq to 3,
+                                  ▼  rotates owner tag to tag(sk, 2)]
+```
 
 #### Public Ledger State Schema (`export ledger ...`)
 
-The public on-chain state stored on the ledger is represented by `ContractLedger`:
+The on-chain public state consists of four fields:
 
-| Field | Type | Description |
+| Field Name | Type | Description |
 | :--- | :--- | :--- |
-| `state` | `State` (`VACANT = 0`, `OCCUPIED = 1`) | Tracks whether the bulletin board is open or occupied. |
-| `message` | `Maybe<string>` (`{ is_some: boolean, value?: string }`) | The current posted message (or `none` when vacant). |
-| `sequence` | `Counter` (`bigint`) | Monotonically increasing sequence number ensuring anti-replay and unlinkability across updates. |
-| `owner` | `Uint8Array` (`Bytes<32>`) | Zero-knowledge commitment/tag computed as `persistentHash(["bboard:pk:", sequence, sk])`. |
+| `state` | `State` (`VACANT` or `OCCUPIED`) | Represents the availability status of the board. |
+| `message` | `Maybe<Opaque<"string">>` | The currently pinned message, wrapped in `some()` if occupied or `none()` if vacant. |
+| `sequence` | `Counter` | Monotonically increasing counter used as an epoch index for owner tag derivation. |
+| `owner` | `Bytes<32>` | 32-byte commitment tag derived from the owner's secret key and current sequence number. |
 
-#### Private State & Witness Specification
+#### Private State & Witness Specification (`witness ...`)
 
-| Witness | Signature | Description |
-| :--- | :--- | :--- |
-| `localSecretKey` | `(): Bytes<32>` | Supplies the caller's private 32-byte secret key off-chain. Returns `[PS, Uint8Array]` where `PS` is the client private state. |
+The contract relies on one off-chain witness function:
 
-**Security Architecture:**
-- **Zero-Knowledge Ownership:** The caller proves ownership by proving in ZK that they possess the preimage `sk` corresponding to the commitment stored in `owner` at the expected sequence number `sequence - 1`. The raw secret key `sk` is never published to the ledger.
-- **Unlinkable Forward Privacy:** Every message update rotates the sequence number and publishes a freshly derived owner tag calculated with the incremented sequence, preventing external observers from linking sequential message updates to the same identity.
+- **`witness localSecretKey(): Bytes<32>`**: Supplies the caller's 32-byte private secret key to the Zero-Knowledge circuit. The secret key is hashed in-circuit and **never** disclosed directly to the ledger.
 
-#### Zero-Knowledge Circuits
+#### Available Zero-Knowledge Circuits (`export circuit ...`)
 
-##### 1. `postMessage(newMessage: string): []`
-- **VACANT State:** Computes the commitment `tag = deriveOwnerTag(sk, sequence)`, stores `owner = tag`, sets `message = some(newMessage)`, advances `state = State.OCCUPIED`, and increments `sequence`.
-- **OCCUPIED State:** Verifies caller ownership via `assert(owner == deriveOwnerTag(sk, sequence - 1))`, updates `message = some(newMessage)`, generates a new `owner = deriveOwnerTag(sk, sequence)`, and increments `sequence`.
-- **Assertions:**
-  - `"Only the current owner can edit the post"` (if the board is occupied and `deriveOwnerTag` mismatch occurs).
+1. **`constructor()`**:
+   - Initializes `state` to `State.VACANT`.
+   - Initializes `message` to `none<Opaque<"string">>()`.
+   - Sets `owner` to 32 zero-bytes (`pad(32, "")`).
+   - Increments `sequence` by 1 (initial sequence is 1).
 
-##### 2. `takeDown(): string`
-- Takes down an existing post. Only callable by the current owner.
-- Resets `state` to `VACANT`, clears `message` to `none`, resets `owner` to 32 zero bytes, and increments `sequence`.
-- Returns the previous message string.
-- **Assertions:**
-  - `"Attempted to take down post from an empty board"` (if `state != State.OCCUPIED`).
-  - `"Corrupted state: post is occupied but message is empty"` (if `message.is_some == false`).
-  - `"Attempted to take down post, but not the current owner"` (if caller's tag does not match `owner`).
+2. **`postMessage(newMessage: Opaque<"string">): []`**:
+   - **When VACANT**: Computes tag `H("bboard:pk:", sequence, sk)`, writes tag to `owner` via `disclose()`, sets `message` to `disclose(some(newMessage))`, updates `state` to `OCCUPIED`, and increments `sequence`.
+   - **When OCCUPIED**: Asserts that `deriveOwnerTag(sk, sequence - 1) == owner`. Updates `message` to `disclose(some(newMessage))`, rotates `owner` to `disclose(deriveOwnerTag(sk, sequence))`, and increments `sequence`.
+
+3. **`takeDown(): Opaque<"string">`**:
+   - Asserts `state == State.OCCUPIED`.
+   - Asserts `message.is_some`.
+   - Asserts `owner == deriveOwnerTag(sk, sequence - 1)`.
+   - Resets `state` to `VACANT`, `message` to `none()`, `owner` to 32 zero-bytes, and increments `sequence`.
+   - Returns the previous message string.
 
 ---
 
 ### 2. Prerequisites & Installation
 
-Add the required Midnight Compact runtime packages:
+Ensure you have Node.js 18+ and the required Midnight packages installed:
 
 ```bash
 npm install @midnight-ntwrk/compact-runtime
-npm install -D typescript @types/node tsx
+npm install -D typescript tsx @types/node
 ```
-
-Ensure your `tsconfig.json` targets Node 18+ with `ESNext` module resolution.
 
 ---
 
 ### 3. API Reference
 
-#### `BulletinBoardClient<PS>`
+#### `BulletinBoardClient<PS = BulletinBoardPrivateState>`
 
 ```typescript
-class BulletinBoardClient<PS extends BulletinBoardPrivateState> {
+class BulletinBoardClient<PS = BulletinBoardPrivateState> {
   constructor(witnesses?: BulletinBoardWitnesses<PS>);
 
-  initialState(
-    constructorCtx: ConstructorContext<PS>
-  ): ConstructorResult<PS>;
+  initialState(context: ConstructorContext<PS>): ConstructorResult<PS>;
 
-  postMessage(
-    circuitCtx: CircuitContext<BulletinBoardLedgerState, PS>,
-    newMessage: string
-  ): CircuitResults<PS, []>;
+  postMessage(context: CircuitContext<PS>, newMessage: string): CircuitResults<PS, []>;
 
-  takeDown(
-    circuitCtx: CircuitContext<BulletinBoardLedgerState, PS>
-  ): CircuitResults<PS, string>;
+  takeDown(context: CircuitContext<PS>): CircuitResults<PS, string>;
 
-  queryLedgerStateFromRaw(
-    rawState: StateValue | ChargedState | unknown
-  ): BulletinBoardLedgerState;
+  queryLedgerStateFromRaw(rawState: StateValue | ChargedState | unknown): BulletinBoardLedgerState;
 }
 ```
+
+#### Circuit Assertions & Error Codes
+
+| Circuit | Assertion Condition | Error Message |
+| :--- | :--- | :--- |
+| `postMessage` | `currentTag == computedTag` | `"Only the current owner can edit the post"` |
+| `takeDown` | `state == State.OCCUPIED` | `"Attempted to take down post from an empty board"` |
+| `takeDown` | `message.is_some` | `"Corrupted state: post is occupied but message is empty"` |
+| `takeDown` | `owner == expectedTag` | `"Attempted to take down post, but not the current owner"` |
 
 ---
 
 ### 4. Step-by-Step Quickstart & Usage Walkthrough
 
-Save this executable script to `examples/bulletin-board-example.ts`.
+Save the following executable script to `examples/bulletin-board-example.ts`:
 
 ```typescript
 /**
@@ -102,133 +129,113 @@ Save this executable script to `examples/bulletin-board-example.ts`.
  *   npx tsx examples/bulletin-board-example.ts
  */
 
-import {
-  createConstructorContext,
-  createCircuitContext,
-} from '@midnight-ntwrk/compact-runtime';
+import { CompactRuntime } from '@midnight-ntwrk/compact-runtime';
 import {
   BulletinBoardClient,
   type BulletinBoardPrivateState,
-  type BulletinBoardWitnesses,
+  createDefaultWitnesses,
 } from '../src/client/bulletin-board-sdk.js';
 
-// Setup Mock 32-Byte Hex Keys and Addresses
-const coinPublicKey = '01'.repeat(32);
-const contractAddress = '00'.repeat(32);
-
-// Setup Private States for Two Users
-const userA_SecretKey = new Uint8Array(32).fill(7);
-const userB_SecretKey = new Uint8Array(32).fill(9);
-
-const userAPrivateState: BulletinBoardPrivateState = {
-  secretKey: userA_SecretKey,
-};
-
-const userBPrivateState: BulletinBoardPrivateState = {
-  secretKey: userB_SecretKey,
-};
-
-// Define Standard Witnesses
-const witnesses: BulletinBoardWitnesses<BulletinBoardPrivateState> = {
-  localSecretKey: (context) => {
-    return [context.privateState, context.privateState.secretKey];
-  },
-};
-
 async function main() {
-  console.log('=== Initializing Bulletin Board SDK Client ===');
-  const client = new BulletinBoardClient<BulletinBoardPrivateState>(witnesses);
+  console.log('=== Midnight Bulletin Board SDK Walkthrough ===\n');
 
-  // 1. Initialize Contract State
-  const constructorCtx = createConstructorContext(userAPrivateState, coinPublicKey);
+  // 1. Setup mock keys and contract addresses (32-byte hex strings)
+  const coinPublicKey = '01'.repeat(32);
+  const contractAddress = '00'.repeat(32);
+
+  // User Alice's private key (32 bytes)
+  const aliceSecretKey = new Uint8Array(32).fill(0xaa);
+  const alicePrivateState: BulletinBoardPrivateState = { secretKey: aliceSecretKey };
+
+  // User Bob's private key (32 bytes)
+  const bobSecretKey = new Uint8Array(32).fill(0xbb);
+  const bobPrivateState: BulletinBoardPrivateState = { secretKey: bobSecretKey };
+
+  // Instantiate client SDK
+  const client = new BulletinBoardClient(createDefaultWitnesses());
+
+  // 2. Initialize contract state
+  console.log('1. Initializing Bulletin Board contract...');
+  const constructorCtx = CompactRuntime.createConstructorContext(alicePrivateState, coinPublicKey);
   const initResult = client.initialState(constructorCtx);
 
+  // Track ledger state data
   let currentChargedState = initResult.currentContractState.data;
-  let currentUserAPrivateState = initResult.currentPrivateState;
+  let aliceState = initResult.currentPrivateState;
 
   let ledgerView = client.queryLedgerStateFromRaw(currentChargedState);
-  console.log('Initial Ledger State:', {
-    state: ledgerView.state === 0 ? 'VACANT' : 'OCCUPIED',
-    sequence: ledgerView.sequence,
-  });
+  console.log('   Initial Board State:', ledgerView.state === 0 ? 'VACANT' : 'OCCUPIED');
+  console.log('   Initial Sequence:', ledgerView.sequence.value);
 
-  // 2. User A Posts a Message
-  console.log('\n--- User A posts "Hello Midnight World!" ---');
-  const postCtx1 = createCircuitContext(
+  // 3. Alice posts a message to the vacant board
+  console.log('\n2. Alice claims the vacant board and posts a message...');
+  const postCtx1 = CompactRuntime.createCircuitContext(
     contractAddress,
     coinPublicKey,
     currentChargedState,
-    currentUserAPrivateState,
+    aliceState
   );
 
-  const postResult1 = client.postMessage(postCtx1, 'Hello Midnight World!');
+  const postResult1 = client.postMessage(postCtx1, 'Hello Midnight World from Alice!');
   currentChargedState = postResult1.context.currentQueryContext.state;
-  currentUserAPrivateState = postResult1.context.privateState;
+  aliceState = postResult1.context.privateState;
 
   ledgerView = client.queryLedgerStateFromRaw(currentChargedState);
-  console.log('Updated Ledger State:', {
-    state: ledgerView.state === 1 ? 'OCCUPIED' : 'VACANT',
-    message: ledgerView.message.is_some ? ledgerView.message.value : null,
-    sequence: ledgerView.sequence,
-  });
+  console.log('   Board State:', ledgerView.state === 1 ? 'OCCUPIED' : 'VACANT');
+  console.log('   Message:', ledgerView.message.is_some ? ledgerView.message.value : 'none');
+  console.log('   Sequence:', ledgerView.sequence.value);
 
-  // 3. User A Updates the Message
-  console.log('\n--- User A updates message to "Midnight Privacy in Action" ---');
-  const postCtx2 = createCircuitContext(
+  // 4. Alice updates her message
+  console.log('\n3. Alice edits her existing post...');
+  const postCtx2 = CompactRuntime.createCircuitContext(
     contractAddress,
     coinPublicKey,
     currentChargedState,
-    currentUserAPrivateState,
+    aliceState
   );
 
-  const postResult2 = client.postMessage(postCtx2, 'Midnight Privacy in Action');
+  const postResult2 = client.postMessage(postCtx2, 'Alice updated her message with zk-privacy!');
   currentChargedState = postResult2.context.currentQueryContext.state;
-  currentUserAPrivateState = postResult2.context.privateState;
+  aliceState = postResult2.context.privateState;
 
   ledgerView = client.queryLedgerStateFromRaw(currentChargedState);
-  console.log('Updated Ledger State:', {
-    state: ledgerView.state === 1 ? 'OCCUPIED' : 'VACANT',
-    message: ledgerView.message.is_some ? ledgerView.message.value : null,
-    sequence: ledgerView.sequence,
-  });
+  console.log('   Updated Message:', ledgerView.message.is_some ? ledgerView.message.value : 'none');
+  console.log('   Sequence:', ledgerView.sequence.value);
 
-  // 4. User B attempts unauthorized take down (Should Fail)
-  console.log('\n--- User B attempts unauthorized take down (Expected failure) ---');
-  const unauthCtx = createCircuitContext(
-    contractAddress,
-    coinPublicKey,
-    currentChargedState,
-    userBPrivateState,
-  );
-
+  // 5. Bob attempts to overwrite Alice's post (expect circuit assertion failure)
+  console.log('\n4. Bob attempts to edit Alice\'s post (should fail)...');
   try {
-    client.takeDown(unauthCtx);
-    console.error('ERROR: Unauthorized take down succeeded unexpectedly.');
-  } catch (err: any) {
-    console.log('Successfully rejected unauthorized takeDown:', err.message || err);
+    const bobCtx = CompactRuntime.createCircuitContext(
+      contractAddress,
+      coinPublicKey,
+      currentChargedState,
+      bobPrivateState
+    );
+    client.postMessage(bobCtx, 'Bob malicious edit');
+    console.error('   ERROR: Bob was able to overwrite Alice\'s post!');
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log('   Expected circuit failure caught:', message);
   }
 
-  // 5. User A Takes Down the Post
-  console.log('\n--- User A takes down the post ---');
-  const takeDownCtx = createCircuitContext(
+  // 6. Alice takes down her post
+  console.log('\n5. Alice takes down her post...');
+  const takeDownCtx = CompactRuntime.createCircuitContext(
     contractAddress,
     coinPublicKey,
     currentChargedState,
-    currentUserAPrivateState,
+    aliceState
   );
 
   const takeDownResult = client.takeDown(takeDownCtx);
   currentChargedState = takeDownResult.context.currentQueryContext.state;
-  currentUserAPrivateState = takeDownResult.context.privateState;
-
-  console.log('Former message returned by circuit:', takeDownResult.result);
+  aliceState = takeDownResult.context.privateState;
 
   ledgerView = client.queryLedgerStateFromRaw(currentChargedState);
-  console.log('Final Ledger State:', {
-    state: ledgerView.state === 0 ? 'VACANT' : 'OCCUPIED',
-    message: ledgerView.message.is_some ? ledgerView.message.value : null,
-    sequence: ledgerView.sequence,
-  });
+  console.log('   Returned Taken Down Message:', takeDownResult.result);
+  console.log('   Final Board State:', ledgerView.state === 0 ? 'VACANT' : 'OCCUPIED');
+  console.log('   Final Sequence:', ledgerView.sequence.value);
+  console.log('\n=== Walkthrough completed successfully ===');
 }
 
 main().catch(console.error);
@@ -238,20 +245,21 @@ main().catch(console.error);
 
 ### 5. Privacy & Security Notes
 
-1. **Private State Storage:** Keep `BulletinBoardPrivateState.secretKey` securely stored within secure client keyrings/hardware enclaves. Never pass private keys to loggers or public network calls.
-2. **Witness Purity:** The `localSecretKey` witness must return a tuple `[PS, Uint8Array]` without side effects or unencrypted network telemetry.
-3. **Disclose Scope:** The contract uses `disclose()` exclusively on deterministic hashes (`owner`) and the public payload (`message`), preserving preimage confidentiality for all actors.
+1. **Tag Rotation & Forward Privacy**: The owner tag is computed as `persistentHash(["bboard:pk:", sequence, sk])`. Because `sequence` increments upon each edit or claim, the public tag changes every time. External observers cannot correlate multiple edits to the same secret key without knowing `sk`.
+2. **Off-Chain Witness Management**: The witness `localSecretKey` reads from client-side private memory. Never expose private state to network transport or non-ZK queries.
+3. **Explicit Disclosures**: Public ledger mutations require `disclose(...)` in Compact. The SDK ensures data boundaries between off-chain private state and on-chain ledger state remain strictly compartmentalized.
 
 ---
 
 ## Part 2: Production TypeScript Client SDK Implementation
 
+Below is the complete SDK implementation for `src/client/bulletin-board-sdk.ts`.
+
 ```typescript
 /**
- * Production Client SDK for the Midnight Bulletin Board Smart Contract.
+ * BulletinBoard Client SDK
  *
- * Provides typed execution context wrappers, witness management,
- * and ledger query decoders.
+ * Midnight Compact TypeScript adapter for bulletin-board.compact.
  */
 
 import {
@@ -273,103 +281,99 @@ import {
 } from '../../contracts/managed/bulletin-board/contract/index.js';
 
 /**
- * Off-chain private state managed locally by the client.
+ * Off-chain private state schema required by the Bulletin Board witness runtime.
  */
 export interface BulletinBoardPrivateState {
   readonly secretKey: Uint8Array;
 }
 
 /**
- * Public ledger state mapping.
+ * Strongly typed ledger state representation generated by Compact compiler.
  */
 export type BulletinBoardLedgerState = ContractLedger;
 
 /**
- * Strongly typed witness definitions matching Compact witness declarations.
+ * Strongly typed witness interface matching Bulletin Board contract requirements.
+ * Witness methods return a tuple [nextPrivateState, witnessReturnValue].
  */
-export type BulletinBoardWitnesses<PS extends BulletinBoardPrivateState> = {
-  readonly localSecretKey: (
-    context: WitnessContext<ContractLedger, PS>
-  ) => [PS, Uint8Array];
-};
+export interface BulletinBoardWitnesses<PS = BulletinBoardPrivateState> {
+  localSecretKey: (context: WitnessContext<ContractLedger, PS>) => [PS, Uint8Array];
+}
 
 /**
- * Production-grade Client SDK for the BulletinBoard Midnight contract.
+ * Creates default witnesses that extract the secretKey from BulletinBoardPrivateState.
  */
-export class BulletinBoardClient<PS extends BulletinBoardPrivateState = BulletinBoardPrivateState> {
+export function createDefaultWitnesses<PS extends BulletinBoardPrivateState>(): BulletinBoardWitnesses<PS> {
+  return {
+    localSecretKey: (context: WitnessContext<ContractLedger, PS>): [PS, Uint8Array] => {
+      const { privateState } = context;
+      if (!privateState?.secretKey) {
+        throw new Error('BulletinBoardWitnesses: Missing secretKey in private state');
+      }
+      if (privateState.secretKey.length !== 32) {
+        throw new Error(
+          `BulletinBoardWitnesses: secretKey must be 32 bytes, received ${privateState.secretKey.length} bytes`
+        );
+      }
+      return [privateState, privateState.secretKey];
+    },
+  };
+}
+
+/**
+ * Production-grade client SDK for interacting with the Midnight Bulletin Board contract.
+ */
+export class BulletinBoardClient<PS = BulletinBoardPrivateState> {
   private readonly contract: ManagedContract<PS>;
 
   /**
-   * Constructs a new BulletinBoardClient.
+   * Initializes a new BulletinBoardClient instance.
    *
-   * @param witnesses - Optional custom witness implementations. Defaults to reading `secretKey` from private state.
+   * @param witnesses Optional custom witness implementations. Defaults to standard witness resolvers.
    */
-  constructor(witnesses?: Partial<BulletinBoardWitnesses<PS>>) {
-    const defaultWitnesses: BulletinBoardWitnesses<PS> = {
-      localSecretKey: (context: WitnessContext<ContractLedger, PS>): [PS, Uint8Array] => {
-        return [context.privateState, context.privateState.secretKey];
-      },
-    };
-
-    const resolvedWitnesses: ContractWitnesses<PS> = {
-      localSecretKey: (witnessContext: WitnessContext<ContractLedger, PS>): [PS, Uint8Array] => {
-        if (witnesses?.localSecretKey) {
-          return witnesses.localSecretKey(witnessContext);
-        }
-        return defaultWitnesses.localSecretKey(witnessContext);
-      },
-    };
-
-    this.contract = new ManagedContract<PS>(resolvedWitnesses);
+  constructor(witnesses?: BulletinBoardWitnesses<PS>) {
+    const activeWitnesses = witnesses ?? (createDefaultWitnesses() as unknown as BulletinBoardWitnesses<PS>);
+    this.contract = new ManagedContract<PS>(activeWitnesses as unknown as ContractWitnesses<PS>);
   }
 
   /**
-   * Initializes the contract state via the constructor context.
+   * Generates the initial contract and private state for deployment.
    *
-   * @param context - The constructor context containing initial private state and coin public key.
-   * @returns ConstructorResult containing initial contract and private states.
+   * @param context Constructor context with private state and coin public key.
+   * @returns ConstructorResult containing the initial contract state and private state.
    */
   public initialState(context: ConstructorContext<PS>): ConstructorResult<PS> {
     return this.contract.initialState(context);
   }
 
   /**
-   * Executes the `postMessage` circuit.
-   * Claims the board if VACANT, or updates the post if called by the current owner.
+   * Posts a new message if the board is VACANT, or updates an existing post if caller is owner.
    *
-   * @param context - Active circuit context.
-   * @param newMessage - The message payload to post.
-   * @returns Circuit execution results containing updated context and empty unit tuple return `[]`.
+   * @param context Circuit context containing contract address, keys, state, and private state.
+   * @param newMessage The text message to post.
+   * @returns CircuitResults containing the execution context and unit tuple result `[]`.
    */
-  public postMessage(
-    context: CircuitContext<BulletinBoardLedgerState, PS>,
-    newMessage: string
-  ): CircuitResults<PS, []> {
+  public postMessage(context: CircuitContext<PS>, newMessage: string): CircuitResults<PS, []> {
     return this.contract.circuits.postMessage(context, newMessage);
   }
 
   /**
-   * Executes the `takeDown` circuit.
-   * Clears the board and returns it to VACANT state.
+   * Takes down an existing post on an OCCUPIED board. Caller must be the current owner.
    *
-   * @param context - Active circuit context.
-   * @returns Circuit execution results containing updated context and the removed message string.
+   * @param context Circuit context containing contract address, keys, state, and private state.
+   * @returns CircuitResults containing the execution context and the removed message string.
    */
-  public takeDown(
-    context: CircuitContext<BulletinBoardLedgerState, PS>
-  ): CircuitResults<PS, string> {
+  public takeDown(context: CircuitContext<PS>): CircuitResults<PS, string> {
     return this.contract.circuits.takeDown(context);
   }
 
   /**
-   * Decodes and reads raw on-chain state into strongly typed `BulletinBoardLedgerState`.
+   * Decodes and reads the public ledger state from raw or charged contract state.
    *
-   * @param rawState - Raw state value or charged state received from node query.
-   * @returns Typed contract ledger state.
+   * @param rawState Raw ledger state value from query context or charged state.
+   * @returns Decoded strongly-typed BulletinBoardLedgerState.
    */
-  public queryLedgerStateFromRaw(
-    rawState: StateValue | ChargedState | unknown
-  ): BulletinBoardLedgerState {
+  public queryLedgerStateFromRaw(rawState: StateValue | ChargedState | unknown): BulletinBoardLedgerState {
     return ledger(rawState as StateValue | ChargedState);
   }
 }

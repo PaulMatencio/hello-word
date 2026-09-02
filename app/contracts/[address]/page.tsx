@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, use } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, use } from 'react';
 import Link from 'next/link';
 import {
     FileCode2,
@@ -83,11 +83,16 @@ export default function ContractWorkbenchPage({
         }
     }, [contractAddress]);
 
+    // Polling for live contract state and transaction history
     useEffect(() => {
         fetchState();
-        const interval = setInterval(fetchState, 10000);
+        fetchTransactions();
+        const interval = setInterval(() => {
+            fetchState();
+            fetchTransactions();
+        }, 5000);
         return () => clearInterval(interval);
-    }, [fetchState]);
+    }, [fetchState, fetchTransactions]);
 
     useEffect(() => {
         const fetchContractMeta = async () => {
@@ -97,8 +102,14 @@ export default function ContractWorkbenchPage({
                 if (data.success && data.data) {
                     const list = data.data.deployments || (Array.isArray(data.data) ? data.data : []);
                     const found = list.find((c: any) => c.contractAddress === contractAddress);
-                    if (found && found.contractType) {
-                        const bp = getContractBlueprint(found.contractType);
+                    if (found) {
+                        let type = found.contractType;
+                        if (!type || type === 'hello-world') {
+                            if (found.nickname?.toLowerCase().includes('bulletin')) {
+                                type = 'bulletin-board';
+                            }
+                        }
+                        const bp = getContractBlueprint(type || 'hello-world');
                         if (bp) {
                             setBlueprint(bp);
                             if (bp.circuits?.length > 0) {
@@ -197,10 +208,11 @@ export default function ContractWorkbenchPage({
             toast.success('Circuit Execution Confirmed', `Successfully executed ${activeCircuit.displayName}`, data.data.txHash);
 
             const newTx: TxRecord = {
-                id: Math.random().toString(),
+                id: `tx-${Date.now()}`,
                 txHash: data.data.txHash,
                 contractAddress: contractAddress,
                 circuitName: activeCircuit.name,
+                contractType: blueprint.id,
                 txType: 'contract_call',
                 blockHeight: data.data.blockHeight,
                 message: formInputs.message || `${activeCircuit.displayName} executed`,
@@ -210,7 +222,7 @@ export default function ContractWorkbenchPage({
             };
             addTransaction(newTx);
 
-            // Refresh state & balances
+            // Refresh state & balances immediately
             fetchState();
             fetchWalletStatus();
             fetchTransactions();
@@ -227,16 +239,27 @@ export default function ContractWorkbenchPage({
     };
 
     // Filter transactions for this contract
-    const contractTransactions = transactions.filter(
-        (tx) => !tx.txHash || tx.txHash === contractAddress || tx.message?.includes(contractAddress.slice(0, 8))
-    );
+    const contractTransactions = useMemo(() => {
+        const addrLower = contractAddress.toLowerCase();
+        const shortAddr = contractAddress.slice(0, 8).toLowerCase();
+        return transactions.filter((tx) => {
+            const txContract = tx.contractAddress?.toLowerCase();
+            const txHash = tx.txHash?.toLowerCase();
+            const txMsg = tx.message?.toLowerCase();
+            return (
+                txContract === addrLower ||
+                txHash === addrLower ||
+                (txMsg && txMsg.includes(shortAddr))
+            );
+        });
+    }, [transactions, contractAddress]);
 
     if (blueprint.id === 'bulletin-board') {
         return (
-            <div className="mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 space-y-6">
+            <div className="mx-auto max-w-7xl w-full px-4 py-8 sm:px-6 space-y-8">
                 <div className="flex flex-col gap-3">
                     <Breadcrumbs customLabels={{ [contractAddress]: `${contractAddress.slice(0, 8)}...` }} />
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                         <Link
                             href="/contracts"
                             className="inline-flex items-center space-x-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
@@ -244,10 +267,65 @@ export default function ContractWorkbenchPage({
                             <ArrowLeft className="h-4 w-4" />
                             <span>Back to Contract Registry</span>
                         </Link>
+
+                        <div className="flex items-center space-x-2">
+                            <div className="flex rounded-xl bg-midnight-950 p-1 border border-white/10">
+                                <button
+                                    onClick={() => {
+                                        const bp = getContractBlueprint('bulletin-board');
+                                        if (bp) {
+                                            setBlueprint(bp);
+                                            if (bp.circuits?.length > 0) setActiveCircuit(bp.circuits[0]);
+                                        }
+                                    }}
+                                    className="px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-sm transition-colors"
+                                >
+                                    Bulletin Board
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        const bp = getContractBlueprint('hello-world');
+                                        if (bp) {
+                                            setBlueprint(bp);
+                                            if (bp.circuits?.length > 0) setActiveCircuit(bp.circuits[0]);
+                                        }
+                                    }}
+                                    className="px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+                                >
+                                    Hello World
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <BulletinBoardWorkbench contractAddress={contractAddress} contractNickname={blueprint.name} />
+                <BulletinBoardWorkbench
+                    contractAddress={contractAddress}
+                    contractNickname={blueprint.name}
+                    onTransactionExecuted={() => {
+                        fetchTransactions();
+                        fetchState();
+                        fetchWalletStatus();
+                    }}
+                />
+
+                {/* Bottom Transaction Feed for Bulletin Board */}
+                <div className="space-y-4 pt-4 border-t border-white/5">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-lg font-bold text-white">Contract Activity Log</h2>
+                        <button
+                            onClick={() => {
+                                fetchTransactions();
+                                fetchState();
+                            }}
+                            className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center space-x-1"
+                        >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            <span>Refresh Activity</span>
+                        </button>
+                    </div>
+                    <TransactionFeed transactions={contractTransactions} />
+                </div>
             </div>
         );
     }
@@ -279,15 +357,64 @@ export default function ContractWorkbenchPage({
                                 <button
                                     onClick={copyAddress}
                                     className="text-slate-400 hover:text-white transition-colors"
-                                    title="Copy Contract Address"
+                                    title="Copy contract address"
                                 >
-                                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                                    {copied ? (
+                                        <Check className="h-3.5 w-3.5 text-emerald-400" />
+                                    ) : (
+                                        <Copy className="h-3.5 w-3.5" />
+                                    )}
                                 </button>
+                                <a
+                                    href={`https://explorer.1am.xyz/contract/${contractAddress}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-400 hover:text-indigo-300 transition-colors inline-flex items-center space-x-1"
+                                    title="View in Explorer"
+                                >
+                                    <ExternalLink className="h-3.5 w-3.5" />
+                                </a>
                             </div>
                         </div>
                     </div>
 
                     <div className="flex items-center space-x-3">
+                        {/* Workbench Type Switcher */}
+                        <div className="flex rounded-xl bg-midnight-950 p-1 border border-white/10">
+                            <button
+                                onClick={() => {
+                                    const bp = getContractBlueprint('bulletin-board');
+                                    if (bp) {
+                                        setBlueprint(bp);
+                                        if (bp.circuits?.length > 0) setActiveCircuit(bp.circuits[0]);
+                                    }
+                                }}
+                                className="px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+                            >
+                                Bulletin Board
+                            </button>
+                            <button
+                                onClick={() => {
+                                    const bp = getContractBlueprint('hello-world');
+                                    if (bp) {
+                                        setBlueprint(bp);
+                                        if (bp.circuits?.length > 0) setActiveCircuit(bp.circuits[0]);
+                                    }
+                                }}
+                                className="px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 text-white shadow-sm transition-colors"
+                            >
+                                Hello World
+                            </button>
+                        </div>
+
+                        <Link
+                            href="/contracts"
+                            className="inline-flex items-center space-x-2 rounded-xl bg-midnight-900 border border-white/10 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-midnight-800 transition-colors"
+                        >
+                            <ArrowLeft className="h-4 w-4" />
+                            <span>Registry</span>
+                        </Link>
+
                         <button
                             onClick={fetchState}
                             disabled={isLoadingState}
@@ -541,8 +668,20 @@ export default function ContractWorkbenchPage({
             </div>
 
             {/* Bottom Transaction Feed */}
-            <div className="space-y-4">
-                <h2 className="text-lg font-bold text-white">Contract Activity Log</h2>
+            <div className="space-y-4 pt-4 border-t border-white/5">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-bold text-white">Contract Activity Log</h2>
+                    <button
+                        onClick={() => {
+                            fetchTransactions();
+                            fetchState();
+                        }}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center space-x-1"
+                    >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                        <span>Refresh Activity</span>
+                    </button>
+                </div>
                 <TransactionFeed transactions={contractTransactions} />
             </div>
         </div>
