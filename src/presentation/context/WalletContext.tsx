@@ -5,6 +5,7 @@ import { useSystem } from './SystemContext';
 import {
     isMidnightExtensionInstalled,
     connectMidnightLaceWallet,
+    fetchExtensionWalletBalances,
     MidnightConnectedApi,
 } from '@/src/infrastructure/midnight/midnight-dapp-connector';
 
@@ -12,11 +13,15 @@ export type WalletConnectionMode = 'extension' | 'seed';
 
 export interface WalletStatus {
     unshieldedAddress: string;
+    shieldedAddress?: string;
     coinPublicKey?: string;
     encryptionPublicKey?: string;
     tNightBalance: string;
     tNightDisplay: string;
     dustBalance: string;
+    dustDisplay?: string;
+    dustCap?: string;
+    dustCapDisplay?: string;
     isSynced: boolean;
     syncProgress?: {
         isSynced: boolean;
@@ -38,8 +43,10 @@ interface WalletContextType {
     extensionAddress: string;
     extensionShieldedAddress: string;
     extensionNetworkId: string;
+    extensionApi: MidnightConnectedApi | null;
     connectExtension: () => Promise<boolean>;
     disconnectExtension: () => void;
+    recheckExtension: () => boolean;
     seed: string;
     setSeed: (seed: string) => void;
     defaultSeed: string;
@@ -57,7 +64,8 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const fallbackSeed = 'bfddeea52c8e16ebc8b278f4bb5a76604982046d690e7c6f3139831c6888861d';
     const [seed, setSeed] = useState<string>(fallbackSeed);
     const [defaultSeed, setDefaultSeed] = useState<string>(fallbackSeed);
-    const [walletStatus, setWalletStatus] = useState<WalletStatus | null>(null);
+    const [seedWalletStatus, setSeedWalletStatus] = useState<WalletStatus | null>(null);
+    const [extensionWalletStatus, setExtensionWalletStatus] = useState<WalletStatus | null>(null);
     const [isLoadingWallet, setIsLoadingWallet] = useState<boolean>(false);
     const [isRegisteringDust, setIsRegisteringDust] = useState<boolean>(false);
     const isFetchingRef = useRef(false);
@@ -69,54 +77,205 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const [extensionAddress, setExtensionAddress] = useState<string>('');
     const [extensionShieldedAddress, setExtensionShieldedAddress] = useState<string>('');
     const [extensionNetworkId, setExtensionNetworkId] = useState<string>('preprod');
-    const [, setExtensionApi] = useState<MidnightConnectedApi | null>(null);
+    const [extensionApi, setExtensionApi] = useState<MidnightConnectedApi | null>(null);
+    const extensionApiRef = useRef<MidnightConnectedApi | null>(null);
 
-    // Check extension detection on client mount
-    useEffect(() => {
-        const checkExtension = () => {
-            const installed = isMidnightExtensionInstalled();
-            setIsExtensionInstalled(installed);
-        };
-        checkExtension();
-        const timeout = setTimeout(checkExtension, 1000);
-        return () => clearTimeout(timeout);
+    // Active walletStatus depending on current mode
+    const walletStatus =
+        connectionMode === 'extension' && isExtensionConnected && extensionWalletStatus
+            ? extensionWalletStatus
+            : seedWalletStatus;
+
+    // Recheck extension helper
+    const recheckExtension = useCallback((): boolean => {
+        const installed = isMidnightExtensionInstalled();
+        setIsExtensionInstalled(installed);
+        return installed;
     }, []);
 
+    // Check extension detection on client mount and with progressive timeouts
+    useEffect(() => {
+        recheckExtension();
+
+        const intervals = [100, 300, 800, 1500, 3000, 5000];
+        const timers = intervals.map((delay) => setTimeout(recheckExtension, delay));
+
+        const handleFocus = () => recheckExtension();
+        window.addEventListener('focus', handleFocus);
+        window.addEventListener('load', handleFocus);
+
+        return () => {
+            timers.forEach(clearTimeout);
+            window.removeEventListener('focus', handleFocus);
+            window.removeEventListener('load', handleFocus);
+        };
+    }, [recheckExtension]);
+
     // Connect to Midnight Lace Browser Extension (Zero-Seed)
-    const connectExtension = async (): Promise<boolean> => {
+    const connectExtension = useCallback(async (): Promise<boolean> => {
         try {
+            recheckExtension();
             const res = await connectMidnightLaceWallet();
+            extensionApiRef.current = res.api;
             setExtensionApi(res.api);
             setExtensionAddress(res.address);
             setExtensionShieldedAddress(res.shieldedAddress || '');
             setExtensionNetworkId(res.networkId || 'preprod');
             setIsExtensionConnected(true);
+            setIsExtensionInstalled(true);
             setConnectionMode('extension');
+
+            try {
+                localStorage.setItem('midnight_wallet_connection_mode', 'extension');
+            } catch {}
+
+            // Immediately set the extension wallet status with preprod balances
+            const extStatus: WalletStatus = {
+                unshieldedAddress: res.address,
+                shieldedAddress: res.shieldedAddress,
+                tNightBalance: res.balances.tNightBalance,
+                tNightDisplay: res.balances.tNightDisplay,
+                dustBalance: res.balances.dustBalance,
+                dustDisplay: res.balances.dustDisplay,
+                dustCap: res.balances.dustCap,
+                dustCapDisplay: res.balances.dustCapDisplay,
+                isSynced: true,
+                syncProgress: {
+                    isSynced: true,
+                    percentage: 100,
+                    appliedId: 'Lace Preprod',
+                    highestTransactionId: 'Preprod Synced',
+                    isConnected: true,
+                    unshielded: { applied: '1', highest: '1', percentage: 100 },
+                    shielded: { applied: '1', highest: '1', percentage: 100 },
+                    dust: { applied: '1', highest: '1', percentage: 100 },
+                },
+            };
+            setExtensionWalletStatus(extStatus);
             return true;
         } catch (err: any) {
             console.error('Failed to connect Midnight extension:', err);
             throw err;
         }
-    };
+    }, [recheckExtension]);
 
-    const disconnectExtension = () => {
+    const disconnectExtension = useCallback(() => {
+        extensionApiRef.current = null;
         setExtensionApi(null);
         setExtensionAddress('');
         setExtensionShieldedAddress('');
         setIsExtensionConnected(false);
+        setExtensionWalletStatus(null);
         setConnectionMode('seed');
-    };
+        try {
+            localStorage.setItem('midnight_wallet_connection_mode', 'seed');
+        } catch {}
+    }, []);
 
-    // Sync seed from default deployment when available
+    const handleSetConnectionMode = useCallback((mode: WalletConnectionMode) => {
+        setConnectionMode(mode);
+        try {
+            localStorage.setItem('midnight_wallet_connection_mode', mode);
+        } catch {}
+    }, []);
+
+    const handleSetSeed = useCallback((newSeed: string) => {
+        setSeed(newSeed);
+        try {
+            localStorage.setItem('midnight_wallet_seed', newSeed);
+        } catch {}
+    }, []);
+
+    // Restore saved connectionMode and seed on initial mount
+    useEffect(() => {
+        try {
+            const savedMode = localStorage.getItem('midnight_wallet_connection_mode') as WalletConnectionMode | null;
+            const savedSeed = localStorage.getItem('midnight_wallet_seed');
+
+            if (savedSeed) {
+                setSeed(savedSeed);
+            }
+
+            if (savedMode === 'extension') {
+                setConnectionMode('extension');
+                // Silently auto-reconnect to Lace extension
+                const autoConnect = async () => {
+                    if (isMidnightExtensionInstalled()) {
+                        try {
+                            await connectExtension();
+                        } catch (err) {
+                            console.log('[WalletContext] Auto-reconnect to extension pending/failed:', err);
+                        }
+                    }
+                };
+
+                autoConnect();
+                const t1 = setTimeout(autoConnect, 300);
+                const t2 = setTimeout(autoConnect, 1000);
+                const t3 = setTimeout(autoConnect, 2500);
+
+                return () => {
+                    clearTimeout(t1);
+                    clearTimeout(t2);
+                    clearTimeout(t3);
+                };
+            } else if (savedMode === 'seed') {
+                setConnectionMode('seed');
+            }
+        } catch {}
+    }, [connectExtension]);
+
+    // Sync seed from default deployment when available ONLY if user has not set their own saved seed
     useEffect(() => {
         const foundSeed = systemHealth?.deployment?.deployerSeed || systemHealth?.deployment?.seed;
-        if (foundSeed && foundSeed !== seed) {
-            setSeed(foundSeed);
+        if (foundSeed) {
             setDefaultSeed(foundSeed);
+            try {
+                const savedSeed = localStorage.getItem('midnight_wallet_seed');
+                if (!savedSeed && foundSeed !== seed) {
+                    setSeed(foundSeed);
+                }
+            } catch {}
         }
     }, [systemHealth, seed]);
 
     const fetchWalletStatus = useCallback(async (overrideSeed?: string) => {
+        // If in extension mode and connected, query extension balances
+        if (connectionMode === 'extension' && isExtensionConnected && extensionApiRef.current) {
+            try {
+                const balances = await fetchExtensionWalletBalances(extensionApiRef.current);
+                setExtensionWalletStatus((prev) => {
+                    const activeAddr = extensionAddress || prev?.unshieldedAddress || '';
+                    return {
+                        unshieldedAddress: activeAddr,
+                        shieldedAddress: extensionShieldedAddress || prev?.shieldedAddress,
+                        tNightBalance: balances.tNightBalance,
+                        tNightDisplay: balances.tNightDisplay,
+                        dustBalance: balances.dustBalance,
+                        dustDisplay: balances.dustDisplay,
+                        dustCap: balances.dustCap ?? prev?.dustCap,
+                        dustCapDisplay: balances.dustCapDisplay ?? prev?.dustCapDisplay,
+                        isSynced: true,
+                        syncProgress: prev?.syncProgress || {
+                            isSynced: true,
+                            percentage: 100,
+                            appliedId: 'Lace Preprod',
+                            highestTransactionId: 'Preprod Synced',
+                            isConnected: true,
+                            unshielded: { applied: '1', highest: '1', percentage: 100 },
+                            shielded: { applied: '1', highest: '1', percentage: 100 },
+                            dust: { applied: '1', highest: '1', percentage: 100 },
+                        },
+                    };
+                });
+            } catch (err) {
+                console.warn('[Midnight Lace] Failed to refresh extension balances:', err);
+            }
+            setIsLoadingWallet(false);
+            return;
+        }
+
+        // Otherwise fetch headless seed status
         const targetSeed = overrideSeed || seed;
         if (!targetSeed || isFetchingRef.current) return;
 
@@ -137,10 +296,9 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             if (!text.trim()) return;
             const data = JSON.parse(text);
             if (data.success && data.data) {
-                setWalletStatus(data.data);
+                setSeedWalletStatus(data.data);
             }
         } catch (err: any) {
-            // Silently ignore transient network aborts / reloads during hot compilation
             if (err.name !== 'AbortError' && !(err instanceof SyntaxError)) {
                 console.warn('Wallet status sync issue:', err.message || err);
             }
@@ -149,7 +307,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             isFetchingRef.current = false;
             setIsLoadingWallet(false);
         }
-    }, [seed]);
+    }, [connectionMode, isExtensionConnected, extensionAddress, extensionShieldedAddress, seed]);
 
     // Initial load when seed changes
     useEffect(() => {
@@ -159,16 +317,26 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
     }, [seed, fetchWalletStatus]);
 
+    // Mode switch trigger
+    useEffect(() => {
+        fetchWalletStatus();
+    }, [connectionMode, fetchWalletStatus]);
+
     // Continuous background sync polling (every 3 seconds)
     useEffect(() => {
-        if (!seed) return;
         const interval = setInterval(() => {
-            fetchWalletStatus(seed);
+            fetchWalletStatus();
         }, 3000);
         return () => clearInterval(interval);
-    }, [seed, fetchWalletStatus]);
+    }, [fetchWalletStatus]);
 
     const registerDust = async () => {
+        if (connectionMode === 'extension') {
+            return {
+                success: true,
+                message: 'DUST registration for your Lace browser extension is managed natively inside the Lace extension window. DUST accrues gradually over epochs once registered.',
+            };
+        }
         if (!seed) return { success: false, message: 'No seed selected' };
         setIsRegisteringDust(true);
         try {
@@ -196,16 +364,18 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         <WalletContext.Provider
             value={{
                 connectionMode,
-                setConnectionMode,
+                setConnectionMode: handleSetConnectionMode,
                 isExtensionInstalled,
                 isExtensionConnected,
                 extensionAddress,
                 extensionShieldedAddress,
                 extensionNetworkId,
+                extensionApi,
                 connectExtension,
                 disconnectExtension,
+                recheckExtension,
                 seed,
-                setSeed,
+                setSeed: handleSetSeed,
                 defaultSeed,
                 walletStatus,
                 isLoadingWallet,

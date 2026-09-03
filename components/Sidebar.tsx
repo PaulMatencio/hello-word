@@ -18,6 +18,7 @@ import {
   X,
   SlidersHorizontal,
   Settings,
+  Stethoscope,
 } from 'lucide-react';
 import packageJson from '@/package.json';
 import { useSystem } from '@/src/presentation/context/SystemContext';
@@ -59,6 +60,13 @@ export const navItems = [
     href: '/terminal',
     icon: Terminal,
     description: 'Interactive Midnight CLI console',
+  },
+  {
+    label: 'Tools & Doctor',
+    href: '/tools',
+    icon: Stethoscope,
+    badge: 'Expert',
+    description: 'Network doctor, status codes & templates',
   },
 ];
 

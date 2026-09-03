@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "octocode-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "octocode-mcp"
+      ]
+    }
+  }
+}

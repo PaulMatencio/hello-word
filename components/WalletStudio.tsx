@@ -30,6 +30,9 @@ interface WalletStudioProps {
     isSynced: boolean;
     tNightBalance: string;
     dustBalance: string;
+    dustDisplay?: string;
+    dustCap?: string;
+    dustCapDisplay?: string;
     faucetUrl?: string;
     syncProgress?: {
       appliedId: string;
@@ -71,6 +74,7 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
     extensionNetworkId,
     connectExtension,
     disconnectExtension,
+    recheckExtension,
   } = useWallet();
 
   const [showSeed, setShowSeed] = useState(false);
@@ -105,10 +109,17 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
     setInputSeed(seed);
   }, [seed]);
 
-  const activeDisplayAddress =
+  const rawDisplayAddress =
     connectionMode === 'extension' && isExtensionConnected
-      ? extensionAddress || walletStatus?.address
-      : walletStatus?.address;
+      ? extensionAddress || walletStatus?.unshieldedAddress || walletStatus?.address
+      : walletStatus?.unshieldedAddress || walletStatus?.address;
+
+  const activeDisplayAddress: string =
+    typeof rawDisplayAddress === 'string'
+      ? rawDisplayAddress
+      : typeof rawDisplayAddress === 'object' && rawDisplayAddress !== null
+      ? (rawDisplayAddress as any).unshieldedAddress || (rawDisplayAddress as any).address || ''
+      : '';
 
   const handleCopyAddr = () => {
     if (!activeDisplayAddress) return;
@@ -166,7 +177,22 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
     maximumFractionDigits: 6,
   });
   const rawDust = walletStatus?.dustBalance ? BigInt(walletStatus.dustBalance) : 0n;
-  const formattedDust = Number(rawDust).toLocaleString();
+  const dustInUnits = rawDust >= 1_000_000_000n ? Number(rawDust) / 1e15 : Number(rawDust);
+  const formattedDust = walletStatus?.dustDisplay || dustInUnits.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  });
+
+  const rawDustCap = walletStatus?.dustCap ? BigInt(walletStatus.dustCap) : 0n;
+  const dustCapInUnits = rawDustCap >= 1_000_000_000n ? Number(rawDustCap) / 1e15 : Number(rawDustCap);
+  const formattedDustCap = walletStatus?.dustCapDisplay || (dustCapInUnits > 0 ? dustCapInUnits.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }) : '');
+
+  const fillPercentage = dustCapInUnits > 0
+    ? Math.min(100, Math.max(dustInUnits > 0 ? 1 : 0, Math.round((dustInUnits / dustCapInUnits) * 100)))
+    : 0;
 
   return (
     <div className="glass-panel p-6 sm:p-8 relative">
@@ -390,22 +416,47 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
               </div>
             </div>
           ) : !isExtensionInstalled ? (
-            <div className="rounded-xl bg-amber-950/30 p-4 border border-amber-500/20 text-xs text-slate-300 flex items-start space-x-3">
-              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="font-semibold text-amber-200">Midnight Lace Extension Not Detected</p>
-                <p className="text-slate-400 leading-relaxed">
-                  To connect your Preprod wallet without typing a seed, please install the official Midnight Lace browser extension or enable DApp connections.
-                </p>
-                <div className="pt-2">
+            <div className="rounded-xl bg-amber-950/30 p-5 border border-amber-500/20 text-xs text-slate-300 flex items-start space-x-3.5">
+              <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-2.5 flex-1">
+                <div>
+                  <p className="font-semibold text-amber-200 text-sm">Midnight Lace Extension Not Detected</p>
+                  <p className="text-slate-400 leading-relaxed mt-1">
+                    If you just installed or pinned the <strong>Midnight Lace</strong> extension in Chrome, Chrome requires a <strong>quick page reload</strong> to inject the <code className="font-mono text-cyan-300">window.midnight</code> connector into this tab.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const found = recheckExtension();
+                      if (found) {
+                        toast.success('Extension Found', 'Midnight Lace detected!');
+                      } else {
+                        toast.info('Detection Check', 'No provider detected yet. Please reload tab.');
+                      }
+                    }}
+                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-slate-200 hover:bg-white/20 font-semibold transition-colors cursor-pointer border border-white/10"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Re-scan Extension</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold transition-colors cursor-pointer shadow"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Reload Page</span>
+                  </button>
                   <a
                     href="https://midnight.network"
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold hover:bg-amber-500/30 transition-colors"
                   >
-                    <span>Download Midnight Wallet</span>
-                    <ExternalLink className="h-3 w-3" />
+                    <span>Download Midnight Lace</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
                   </a>
                 </div>
               </div>
@@ -555,19 +606,51 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
               <Flame className="h-4 w-4 text-amber-400" />
             </div>
             <div className="mt-1">
-              <p className="text-2xl font-bold text-amber-300 tracking-tight">{formattedDust}</p>
-              <p className="text-[11px] text-slate-500">Zero-Knowledge Gas Token</p>
+              <div className="flex items-baseline space-x-1.5">
+                <p className="text-2xl font-bold text-amber-300 tracking-tight">{formattedDust}</p>
+                <span className="text-xs text-amber-400 font-semibold">DUST</span>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                {formattedDustCap
+                  ? `Tank Capacity: ${formattedDustCap} DUST`
+                  : 'Zero-Knowledge Gas Token'}
+              </p>
+              {dustCapInUnits > 0 && (
+                <div className="mt-2 space-y-1">
+                  <div className="h-1.5 w-full rounded-full bg-midnight-900 border border-white/5 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-amber-500 to-yellow-400 transition-all duration-500"
+                      style={{
+                        width: `${fillPercentage}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono block">
+                    Tank Fill: {fillPercentage}%
+                  </span>
+                </div>
+              )}
             </div>
           </div>
           <div className="mt-3 pt-2 border-t border-white/5 flex items-center justify-between">
-            <button
-              onClick={onRegisterDust}
-              disabled={isRegisteringDust || !walletStatus || BigInt(walletStatus.tNightBalance || 0) === 0n}
-              className="inline-flex items-center space-x-1 text-xs text-amber-400 hover:text-amber-300 font-medium disabled:opacity-40 disabled:hover:text-amber-400"
-            >
-              <Zap className={`h-3 w-3 ${isRegisteringDust ? 'animate-bounce' : ''}`} />
-              <span>{isRegisteringDust ? 'Registering...' : 'Register for DUST'}</span>
-            </button>
+            {connectionMode === 'extension' ? (
+              <span
+                className="inline-flex items-center space-x-1.5 text-xs text-amber-300/90 font-medium"
+                title="DUST generation for your Lace account is managed directly in the Lace extension. Accrual occurs continuously over network epochs."
+              >
+                <Zap className="h-3 w-3 text-amber-400" />
+                <span>Managed in Lace Extension</span>
+              </span>
+            ) : (
+              <button
+                onClick={onRegisterDust}
+                disabled={isRegisteringDust || !walletStatus || BigInt(walletStatus.tNightBalance || 0) === 0n}
+                className="inline-flex items-center space-x-1 text-xs text-amber-400 hover:text-amber-300 font-medium disabled:opacity-40 disabled:hover:text-amber-400 cursor-pointer"
+              >
+                <Zap className={`h-3 w-3 ${isRegisteringDust ? 'animate-bounce' : ''}`} />
+                <span>{isRegisteringDust ? 'Registering...' : 'Register for DUST'}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -589,7 +672,7 @@ export const WalletStudio: React.FC<WalletStudioProps> = ({
             >
               midnight-tmnight-preprod.nethermind.dev
             </a>
-            . Once received, click <strong>&quot;Register for DUST&quot;</strong> to start generating gas tokens.
+            . Once received, register for DUST (or check your Lace Dust Tank) to start generating fuel. Note that DUST behaves like a battery and accrues gradually over network epochs based on your registered tNIGHT balance.
           </p>
         </div>
       </div>

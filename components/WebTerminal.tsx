@@ -89,6 +89,9 @@ export const WebTerminal: React.FC<WebTerminalProps> = ({
       addLine('  [3] status            - Checks wallet address, tNIGHT balance and DUST balance');
       addLine('  [4] dust              - Registers unshielded coins for DUST generation');
       addLine('  [5] deploy            - Deploys a new Hello World Compact contract');
+      addLine('  [6] doctor            - Runs ecosystem diagnostics (Node, Indexer, Prover, CLI)');
+      addLine('  [7] codes <query>     - Searches 460+ Midnight error & status codes');
+      addLine('  [8] templates         - Lists production Compact smart contract templates');
       addLine('  clear                 - Clears the terminal screen');
       return;
     }
@@ -174,8 +177,11 @@ export const WebTerminal: React.FC<WebTerminalProps> = ({
         }
         addLine(`Wallet Address: ${data.data.address}`, 'info');
         addLine(`Status: ${data.data.isSynced ? '✓ Synced' : 'Syncing'}`, 'info');
-        addLine(`tNIGHT Balance: ${Number(data.data.tNightBalance).toLocaleString()} tNIGHT`, 'success');
-        addLine(`DUST Balance:   ${Number(data.data.dustBalance).toLocaleString()} DUST`, 'success');
+        const tNightUnits = Number(BigInt(data.data.tNightBalance || 0)) / 1_000_000;
+        const dustRaw = BigInt(data.data.dustBalance || 0);
+        const dustUnits = dustRaw >= 1_000_000_000n ? Number(dustRaw) / 1e15 : Number(dustRaw);
+        addLine(`tNIGHT Balance: ${tNightUnits.toLocaleString(undefined, { maximumFractionDigits: 6 })} tNIGHT`, 'success');
+        addLine(`DUST Balance:   ${dustUnits.toLocaleString(undefined, { maximumFractionDigits: 4 })} DUST`, 'success');
       } catch (err: any) {
         addLine(`❌ Error: ${err.message}`, 'error');
       } finally {
@@ -231,6 +237,83 @@ export const WebTerminal: React.FC<WebTerminalProps> = ({
         onRefreshState();
       } catch (err: any) {
         addLine(`❌ Error: ${err.message}`, 'error');
+      } finally {
+        setIsBusy(false);
+      }
+      return;
+    }
+
+    // Command 6: Doctor
+    if (cmd === '6' || cmd === 'doctor') {
+      setIsBusy(true);
+      addLine('🩺 Running Midnight Ecosystem Doctor diagnostics...', 'warning');
+      try {
+        const res = await fetch('/api/diagnostics/doctor');
+        const data = await res.json();
+        if (data.success) {
+          const s = data.diagnostics.services;
+          addLine(`Network: ${data.diagnostics.networkId.toUpperCase()}`, 'info');
+          addLine(`• Node RPC:     [${s.node?.status?.toUpperCase()}] ${s.node?.latencyMs || 0}ms (${s.node?.url})`, s.node?.status === 'online' ? 'success' : 'error');
+          addLine(`• Indexer:      [${s.indexer?.status?.toUpperCase()}] ${s.indexer?.latencyMs || 0}ms`, s.indexer?.status === 'online' ? 'success' : 'error');
+          addLine(`• Proof Server: [${s.proofServer?.status?.toUpperCase()}] (${s.proofServer?.note || 'Port 6300'})`, s.proofServer?.status === 'online' ? 'success' : 'warning');
+          addLine(`• Compact CLI:  [${s.compactCli?.status?.toUpperCase()}] ${s.compactCli?.version || 'N/A'}`, s.compactCli?.status === 'online' ? 'success' : 'error');
+        } else {
+          addLine('❌ Doctor diagnostic probe failed.', 'error');
+        }
+      } catch (err: any) {
+        addLine(`❌ Doctor error: ${err.message}`, 'error');
+      } finally {
+        setIsBusy(false);
+      }
+      return;
+    }
+
+    // Command 7: Status Codes Lookup
+    if (cmd === '7' || cmd === 'codes' || cmd === 'code') {
+      const q = argStr.trim();
+      if (!q) {
+        addLine('❌ Usage: codes <code number or keyword> (e.g. codes 0, codes network, codes witness)', 'error');
+        return;
+      }
+      setIsBusy(true);
+      addLine(`🔍 Searching Midnight status codes for "${q}"...`, 'warning');
+      try {
+        const res = await fetch(`/api/diagnostics/codes?q=${encodeURIComponent(q)}&limit=5`);
+        const data = await res.json();
+        if (data.success && data.entries.length > 0) {
+          addLine(`Found ${data.total} status codes (showing first ${data.entries.length}):`, 'success');
+          data.entries.forEach((e: any) => {
+            addLine(`• [Code ${e.code}] ${e.name} (${e.source}): ${e.description}`, 'info');
+            if (e.fixes && e.fixes.length > 0) {
+              addLine(`   Fix: ${e.fixes[0]}`, 'success');
+            }
+          });
+        } else {
+          addLine(`No status codes matching "${q}".`, 'warning');
+        }
+      } catch (err: any) {
+        addLine(`❌ Search failed: ${err.message}`, 'error');
+      } finally {
+        setIsBusy(false);
+      }
+      return;
+    }
+
+    // Command 8: Templates
+    if (cmd === '8' || cmd === 'templates') {
+      setIsBusy(true);
+      try {
+        const res = await fetch('/api/contracts/templates');
+        const data = await res.json();
+        if (data.success && data.templates.length > 0) {
+          addLine(`Available Compact Contract Templates (${data.templates.length}):`, 'success');
+          data.templates.forEach((t: any) => {
+            addLine(`• [${t.category}] ${t.name} - ${t.description}`, 'info');
+          });
+          addLine('Tip: Open the Tools & Doctor tab to view source code or load directly into the IDE.', 'warning');
+        }
+      } catch (err: any) {
+        addLine(`❌ Failed to list templates: ${err.message}`, 'error');
       } finally {
         setIsBusy(false);
       }

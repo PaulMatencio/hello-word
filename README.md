@@ -47,11 +47,20 @@ A built-in symbolic verification analyzer for mathematically proving contract co
 ---
 
 ### 💼 Wallet Studio & Multi-State Machine Telemetry
+- **Lace Browser Extension & Keyring Modes**: Connect securely with the Midnight Lace browser extension (zero-seed) with automatic silent re-connection on page refresh, or operate via local HD Keyring.
+- **Accurate Token & DUST Metrics**: Precise base unit conversions ($1\text{ tNIGHT} = 10^6\text{ STAR}$, $1\text{ DUST} = 10^{15}\text{ SPECK}$, with a tank capacity of $5\times\text{NIGHT}$ held) with real-time visual capacity meters.
 - **Multi-Role HD Wallet Management**: Manages keys across `Roles.Zswap` (shielded transactions), `Roles.NightExternal` (public identity / Bech32 address), and `Roles.Dust` (fee balancing).
-- **Real-Time Balance Tracking**: Live monitoring of unshielded `tNIGHT` and available `DUST` capacity.
 - **One-Click DUST Registration**: Automatically registers UTXOs with the Midnight DUST engine to generate transaction capacity.
 - **Unshielded Token Transfer Hub**: Send `tNIGHT` tokens with a 4-step visual execution pipeline (*Balance Check -> UTXO Selection -> Proof Generation -> Broadcast*).
 - **Real-Time Sync Activity & Telemetry Monitor**: Sub-wallet convergence tracking across all 3 state machines (Unshielded, Shielded Zswap, DUST Engine) with live throughput rates (items/sec) and event feeds.
+
+---
+
+### 🩺 Midnight Expert Tools & Diagnostics Suite (`/tools`)
+- **Ecosystem Doctor**: Real-time health probes measuring HTTP roundtrip latency, peer counts, and sync status for Node RPC (`https://rpc.preprod.midnight.network`), GraphQL Indexer, Proof Server, and the Compact compiler CLI.
+- **Status Codes & Compiler Error Directory**: Searchable reference of 464+ verified numeric codes, SDK error classes, and compiler diagnostics with descriptions and exact remediation steps.
+- **Compact Contract Template Explorer**: Browse production-ready Compact contract templates (Tokens, DeFi, NFT, Security) with a single-click "Load into Studio IDE" button that feeds code directly into Monaco.
+- **Web Terminal Commands**: Run `doctor` (`6`), `codes <query>` (`7`), or `templates` (`8`) directly inside the in-browser Web Terminal.
 
 ---
 
@@ -160,6 +169,114 @@ Open your browser and navigate to:
 1. In the **Studio IDE** (`/ide`), click **"Deploy Contract"** once compiled.
 2. Select your deployed contract in the **Contracts Directory** (`/contracts`) to open its dedicated **Interactive Circuit Workbench** and submit Zero-Knowledge transactions!
 3. Track all executed transactions and deployed contracts on the live block explorer at [**explorer.1am.xyz**](https://explorer.1am.xyz).
+
+---
+
+## 🧩 Midnight Expert Suite & Agent Plugins
+
+The **Midnight Expert Suite** is a modular ecosystem of 16 plugins designed for AI pair programmers (such as **Antigravity** and **Claude**) and developer tools. It provides specialized agent skills, compiler validation, code quality verification, indexer query engines, wallet management, proof server operations, and diagnostic intelligence across the entire Midnight Network stack.
+
+### 📁 Workspace Configuration (`.agents/`)
+
+The repository is pre-configured with local agent customizations in `.agents/`:
+
+```
+.agents/
+├── mcp_config.json           # Defines workspace MCP servers (octocode-mcp)
+├── rules/
+│   └── compact-rules.md      # Compact 0.22+ compiler rules, witness conventions & tokenomics
+└── plugins/                  # Symlinks to the 16 Midnight Expert plugins
+    ├── compact-core/
+    ├── compact-examples/
+    ├── compact-cli-dev/
+    ├── core-concepts/
+    ├── midnight-cq/
+    ├── midnight-dapp-dev/
+    ├── midnight-expert/
+    ├── midnight-fact-check/
+    ├── midnight-indexer/
+    ├── midnight-node/
+    ├── midnight-plugin-utils/
+    ├── midnight-status-codes/
+    ├── midnight-tooling/
+    ├── midnight-verify/
+    ├── midnight-wallet/
+    └── proof-server/
+```
+
+- **MCP Integration (`octocode-mcp`)**: Configured via `mcp_config.json`, enabling real-time semantic code search and AST queries across the official Midnight open-source repositories (`midnightntwrk/compact`, `midnightntwrk/midnight-node`, etc.).
+- **Contract Rules (`compact-rules.md`)**: Instructs AI agents to enforce `disclose()` wrapping, prevent secret leakage via unverified witness calls, use correct stdlib types (`UserAddress`, `ContractAddress`), and convert token units correctly ($10^6$ STAR per tNIGHT, $10^{15}$ SPECK per DUST).
+
+---
+
+### 📚 Catalog of the 16 Midnight Expert Plugins
+
+| Plugin | Primary Skills & Capabilities | When to Use |
+| :--- | :--- | :--- |
+| **`compact-core`** | `compact-structure`, `compact-language-ref`, `compact-ledger`, `compact-circuit-costs`, `compact-security`, `compact-review`, `compact-privacy-disclosure`, `compact-witness-ts` | Writing Compact syntax, ledger ADTs (`Map`, `Set`, `Counter`), access control, privacy boundaries, and TypeScript witness implementations. |
+| **`compact-examples`** | `code-examples` | Production-grade reference contracts (Fungible tokens, NFTs, multi-tokens, shielded vaults, escrows, and CryptoKitties). |
+| **`compact-cli-dev`** | `core` | Scaffolding, extending, and debugging Oclif command-line interfaces for Midnight Compact contracts. |
+| **`core-concepts`** | `architecture`, `protocols`, `data-models`, `zero-knowledge`, `tokenomics`, `privacy-patterns` | Architectural guidance on Kachina/Zswap protocols, dual-token mechanics, UTXO vs account models, and ZK-SNARK privacy. |
+| **`midnight-cq`** | `compact-testing`, `dapp-connector-testing`, `wallet-testing`, `ledger-testing`, `quality-check`, `quality-init` | Writing Vitest contract tests with `createSimulator`, mocking DApp Connector / Lace, and setting up Biome linting. |
+| **`midnight-dapp-dev`** | `core`, `init`, `dapp-connector`, `midnight-sdk` | Frontend development, React 19 / Next.js integration, `window.midnight` API, and RxJS contract state observables. |
+| **`midnight-expert`** | `doctor`, `feedback`, `add-to-ecosystem` | End-to-end environment diagnostics, reporting GitHub feedback, and registering repositories for Electric Capital tracking. |
+| **`midnight-fact-check`**| `fact-check-extraction`, `fact-check-classification`, `fact-check-reporting` | Extracting testable claims from documentation and generating verifiable test harnesses. |
+| **`midnight-indexer`** | `indexer-architecture`, `indexer-graphql-api`, `indexer-data-model`, `indexer-operations` | Querying the Midnight indexer via GraphQL (`api/v4/graphql`), WebSocket subscriptions, and contract action schemas. |
+| **`midnight-node`** | `node-architecture`, `node-rpc-api`, `node-configuration`, `node-operations`, `node-governance`, `node-validator` | Substrate runtime, Polkadot SDK, JSON-RPC WebSocket (`:9944`), AURA/GRANDPA consensus, and validator operations. |
+| **`midnight-plugin-utils`**| `dependency-checker`, `dependency-scanner`, `find-claude-plugin-root` | Scanning and verifying plugin dependencies, manifests, and file paths. |
+| **`midnight-status-codes`**| `status-codes-lookup`, `status-codes` | Instant code lookup and automated remedies for 464+ verified node error codes, SDK exceptions, and compiler diagnostics. |
+| **`midnight-tooling`** | `compact-cli`, `devnet`, `proof-server`, `devnet-health`, `release-notes`, `troubleshooting` | Compact CLI version switching, local Docker devnet orchestration, and troubleshooting environment errors. |
+| **`midnight-verify`** | `verify-correctness`, `verify-compact`, `verify-zkir`, `verify-witness`, `verify-sdk`, `verify-by-devnet` | Autonomous test runner verifying code correctness via CLI execution, devnet E2E, ZKIR inspection, or WASM PLONK checker. |
+| **`midnight-wallet`** | `wallet-sdk`, `managing-test-wallets`, `sdk-regression-check` | Deriving HD keys, managing test wallets, faucet funding, DUST registration, and `@midnight-ntwrk/wallet-sdk-*` integrations. |
+| **`proof-server`** | `proof-server-api`, `proof-server-architecture`, `proof-server-configuration`, `proof-server-operations`, `proof-server-integration` | Tuning proof server workers, capacity management, HTTP endpoints (`/ready`, `/prove`), and Docker deployment. |
+
+---
+
+### 🤖 How to Use with AI Pair Programmers (Antigravity & Claude)
+
+When working with an AI assistant in this repository, the agent automatically activates these plugins based on your requests. You can also trigger them directly with targeted prompts:
+
+#### 1. Contract Security & Code Audits
+> *"Perform a security and privacy audit on my Compact contract using `compact-core:compact-review`."*  
+> The agent scans for unconstrained circuits, missing `disclose()` boundaries, re-entrancy risks, and witness secret leakage.
+
+#### 2. Unit Testing with Compact Simulator
+> *"Write a Vitest test suite for my contract using `midnight-cq:compact-testing`."*  
+> The agent creates an in-memory simulation using `createSimulator`, mocks off-chain witness state tuples `[PS, ReturnValue]`, and verifies both successful circuits and negative `assert` failures.
+
+#### 3. Resolving Errors & Compiler Diagnostics
+> *"I encountered Midnight error code 166 (or InvalidNetworkId). What does it mean and how do I fix it?"*  
+> The agent invokes `midnight-status-codes:status-codes-lookup` to retrieve the exact description, affected component, and code remediation steps.
+
+#### 4. Frontend & DApp Connector Integration
+> *"Help me connect my React component to the Midnight Lace wallet using `midnight-dapp-dev:dapp-connector`."*  
+> The agent generates type-safe wallet connection logic using `window.midnight[walletKey].enable()` and handles disconnected/permission-rejected states.
+
+#### 5. Local Devnet & Proof Server Diagnostics
+> *"Check the health of my local Midnight devnet and proof server using `midnight-tooling:devnet-health`."*  
+> The agent probes container ports (`:9944`, `:8088`, `:6300`) and reports service status.
+
+---
+
+### 🖥️ How to Use in the Studio Web App & Web Terminal
+
+The Midnight Expert capabilities are also surfaced directly inside the Studio Web App:
+
+1. **Ecosystem Doctor (`/tools` -> Doctor Tab):**
+   - Click **"Run Diagnostic Scan"** to perform live HTTP probes against the Midnight Node RPC, Indexer GraphQL, Proof Server, and Compact CLI.
+   - Shows latency in milliseconds, node peer count, block sync state, and Compact version.
+   - CLI Shortcut: Run `doctor` (or option `6`) in the in-browser **Web Terminal**.
+
+2. **Status Codes Directory (`/tools` -> Status Codes Tab):**
+   - Search across 464 verified Midnight error codes by code number, error name, or keyword.
+   - Filter by source component (`midnight-node`, `compact-compiler`, `midnight-wallet`, `proof-server`, etc.) or category (`transaction_malformed`, `deserialization`, `diagnostic`).
+   - View recommended fixes and exact code aliases.
+   - CLI Shortcut: Run `codes <query>` (e.g. `codes network` or option `7`) in the **Web Terminal**.
+
+3. **Compact Contract Templates (`/tools` -> Templates Tab):**
+   - Browse production smart contract blueprints from `compact-examples` (Shielded ERC-20, Multi-Token, Ownable, Pausable, Escrow, CryptoKitties).
+   - Preview source code and click **"Load into Studio IDE"** to instantly open the contract in the Monaco editor.
+   - CLI Shortcut: Run `templates` (or option `8`) in the **Web Terminal**.
 
 ---
 

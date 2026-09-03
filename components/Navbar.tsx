@@ -18,6 +18,7 @@ import {
   SlidersHorizontal,
   Sun,
   Moon,
+  Stethoscope,
 } from 'lucide-react';
 import { useSystem } from '@/src/presentation/context/SystemContext';
 import { useWallet } from '@/src/presentation/context/WalletContext';
@@ -33,6 +34,7 @@ const routeTitles: Record<string, { title: string; subtitle: string; icon: React
   '/contracts': { title: 'Contracts', subtitle: 'Managed Contracts & ZK Workbench', icon: FileCode2 },
   '/wallet': { title: 'Wallet', subtitle: 'Midnight DUST & Shielded State', icon: Wallet },
   '/terminal': { title: 'Web CLI', subtitle: 'Interactive Midnight Node Shell', icon: Terminal },
+  '/tools': { title: 'Tools & Diagnostics', subtitle: 'Midnight Expert Suite & Network Doctor', icon: Stethoscope },
 };
 
 export const Navbar: React.FC<NavbarProps> = ({ onOpenMobileNav }) => {
