@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Compact Contracts — Standalone Pausable Token
+// Demonstrates emergency circuit-breaker pausing combined with access control.
+
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+import "./modules/security/Pausable" prefix Pausable_;
+import "./modules/access/Ownable" prefix Ownable_;
+import "./modules/utils/Identity" prefix Identity_;
+
+export { Identity_UserSecretKey, Identity_AdminPublicKey };
+export { Identity_deriveAdminPublicKey };
+export { Pausable__isPaused, Ownable__owner };
+
+// Public state
+export ledger balances: Map<Bytes<32>, Uint<64>>;
+export ledger totalSupply: Uint<64>;
+
+// Identity witness providing private 32-byte secret
+witness getUserSecret(): Identity_UserSecretKey;
+
+/**
+ * Initializes the contract, pins the deployer as owner, and starts unpaused.
+ */
+constructor() {
+  const adminKey = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_initialize(adminKey);
+  totalSupply = 0;
+}
+
+// Check if operations are paused
+export circuit isPaused(): Boolean {
+  return Pausable_isPaused();
+}
+
+// Emergency pause: only owner can halt operations
+export circuit pause(): [] {
+  const caller = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_assertOnlyOwner(caller);
+  Pausable__pause();
+}
+
+// Unpause: only owner can resume operations
+export circuit unpause(): [] {
+  const caller = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_assertOnlyOwner(caller);
+  Pausable__unpause();
+}
+
+// Mint tokens to an account: restricted to owner
+export circuit mint(to: Bytes<32>, amount: Uint<64>): [] {
+  const caller = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_assertOnlyOwner(caller);
+  assert(to != default<Bytes<32>>, "PausableToken: invalid receiver");
+
+  const currentBal = balanceOf(to);
+  balances.insert(disclose(to), disclose(currentBal + amount as Uint<64>));
+  totalSupply = disclose(totalSupply + amount as Uint<64>);
+}
+
+// Transfer tokens: HALTED if contract is paused
+export circuit transfer(fromAccount: Bytes<32>, to: Bytes<32>, amount: Uint<64>): Boolean {
+  Pausable_assertNotPaused();
+  assert(fromAccount != default<Bytes<32>>, "PausableToken: invalid sender");
+  assert(to != default<Bytes<32>>, "PausableToken: invalid receiver");
+
+  const fromBal = balanceOf(fromAccount);
+  assert(fromBal >= amount, "PausableToken: insufficient balance");
+
+  balances.insert(disclose(fromAccount), disclose(fromBal - amount as Uint<64>));
+  const toBal = balanceOf(to);
+  balances.insert(disclose(to), disclose(toBal + amount as Uint<64>));
+  return true;
+}
+
+// Query account balance
+export circuit balanceOf(account: Bytes<32>): Uint<64> {
+  if (!balances.member(disclose(account))) {
+    return 0;
+  }
+  return balances.lookup(disclose(account));
+}

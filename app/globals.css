@@ -188,3 +188,10 @@ html.light ::-webkit-scrollbar-thumb {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(99, 102, 241, 0.6);
 }
+
+@layer utilities {
+  .max-w-8xl {
+    max-width: 88rem;
+  }
+}
+

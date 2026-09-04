@@ -9,6 +9,9 @@ export default {
   ],
   theme: {
     extend: {
+      maxWidth: {
+        '8xl': '88rem',
+      },
       colors: {
         midnight: {
           950: '#060813',

@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Compact Contracts — Standalone MultiToken (ERC-1155 equivalent)
+// A production-grade multi-token smart contract with top-level exported circuits.
+
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+import "./modules/token/MultiToken" prefix MultiToken_;
+
+// Re-export identity types and pure key derivation circuits
+export {
+  MultiToken_UserSecretKey,
+  MultiToken_UserPublicKey,
+  MultiToken_AdminPublicKey
+};
+
+export {
+  MultiToken_deriveUserPublicKey,
+  MultiToken_deriveAdminPublicKey
+};
+
+export { Maybe };
+
+// State visibility
+export {
+  MultiToken__balances,
+  MultiToken__operatorApprovals,
+  MultiToken__uri
+};
+
+// Caller identity witness: supplies private 32-byte secret
+witness getUserSecret(): MultiToken_UserSecretKey;
+
+// Contract admin derived key, pinned at deployment
+export ledger contractAdmin: MultiToken_AdminPublicKey;
+
+/**
+ * Initializes the contract with an optional base URI.
+ * If provided, initializes the MultiToken module URI immediately.
+ */
+constructor(_uri: Maybe<Opaque<"string">>) {
+  if (disclose(_uri.is_some)) {
+    MultiToken_initialize(_uri.value);
+  }
+  contractAdmin = disclose(MultiToken_deriveAdminPublicKey(getUserSecret()));
+}
+
+export circuit initialize(_uri: Opaque<"string">): [] {
+  return MultiToken_initialize(_uri);
+}
+
+export circuit uri(id: Uint<128>): Opaque<"string"> {
+  return MultiToken_uri(id);
+}
+
+export circuit balanceOf(account: MultiToken_UserPublicKey, id: Uint<128>): Uint<128> {
+  return MultiToken_balanceOf(account, id);
+}
+
+export circuit isApprovedForAll(
+  account: MultiToken_UserPublicKey,
+  operator: MultiToken_UserPublicKey
+): Boolean {
+  return MultiToken_isApprovedForAll(account, operator);
+}
+
+export circuit setApprovalForAll(
+  operator: MultiToken_UserPublicKey,
+  approved: Boolean
+): [] {
+  const caller = disclose(MultiToken_deriveUserPublicKey(getUserSecret()));
+  MultiToken_setApprovalForAll(caller, operator, approved);
+}
+
+export circuit transfer(
+  to: MultiToken_UserPublicKey,
+  id: Uint<128>,
+  value: Uint<128>
+): [] {
+  const caller = disclose(MultiToken_deriveUserPublicKey(getUserSecret()));
+  MultiToken_transferFrom(caller, caller, to, id, value);
+}
+
+export circuit transferFromAuthorized(
+  fromAddress: MultiToken_UserPublicKey,
+  to: MultiToken_UserPublicKey,
+  id: Uint<128>,
+  value: Uint<128>
+): [] {
+  const caller = disclose(MultiToken_deriveUserPublicKey(getUserSecret()));
+  MultiToken_transferFrom(caller, fromAddress, to, id, value);
+}
+
+export circuit _transfer(
+  fromAddress: MultiToken_UserPublicKey,
+  to: MultiToken_UserPublicKey,
+  id: Uint<128>,
+  value: Uint<128>
+): [] {
+  MultiToken__transfer(fromAddress, to, id, value);
+}
+
+export circuit _setURI(newURI: Opaque<"string">): [] {
+  MultiToken__setURI(newURI);
+}
+
+export circuit _mint(
+  to: MultiToken_UserPublicKey,
+  id: Uint<128>,
+  value: Uint<128>
+): [] {
+  MultiToken__mint(to, id, value);
+}
+
+export circuit _burn(
+  fromAddress: MultiToken_UserPublicKey,
+  id: Uint<128>,
+  value: Uint<128>
+): [] {
+  MultiToken__burn(fromAddress, id, value);
+}
+
+export circuit _setApprovalForAll(
+  owner: MultiToken_UserPublicKey,
+  operator: MultiToken_UserPublicKey,
+  approved: Boolean
+): [] {
+  MultiToken__setApprovalForAll(owner, operator, approved);
+}

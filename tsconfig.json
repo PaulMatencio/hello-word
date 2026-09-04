@@ -38,6 +38,14 @@
   "exclude": [
     "node_modules",
     "dist",
-    "examples"
+    "examples",
+    "contracts/modules",
+    "contracts/security",
+    "contracts/utils",
+    "contracts/access",
+    "access",
+    "security",
+    "token",
+    "utils"
   ]
 }

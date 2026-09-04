@@ -119,6 +119,25 @@ export async function POST(req: NextRequest) {
 
         await fs.writeFile(sourceFilePath, sourceCode, 'utf-8');
 
+        // Ensure standard module links exist for relative imports (../security, ../utils, ../modules, etc.)
+        const modulesRoot = path.join(workspaceRoot, 'contracts', 'modules');
+        const compactTempRoot = path.join(workspaceRoot, '.compact-temp');
+
+        const moduleCategories = ['security', 'utils', 'access', 'token', 'math', 'crypto', 'data-structures', 'identity'];
+        for (const cat of moduleCategories) {
+            const targetDir = path.join(modulesRoot, cat);
+            const linkInTemp = path.join(compactTempRoot, cat);
+            const linkInSource = path.join(sourceDir, cat);
+            try {
+                await fs.symlink(targetDir, linkInTemp).catch(() => {});
+                await fs.symlink(targetDir, linkInSource).catch(() => {});
+            } catch {}
+        }
+        try {
+            await fs.symlink(modulesRoot, path.join(compactTempRoot, 'modules')).catch(() => {});
+            await fs.symlink(modulesRoot, path.join(sourceDir, 'modules')).catch(() => {});
+        } catch {}
+
         // Locate compact compiler executable
         const possiblePaths = [
             '/home/paul/.local/bin/compact',
@@ -141,7 +160,8 @@ export async function POST(req: NextRequest) {
 
         // Build command flags: flags must precede source and target directory paths
         const zkFlag = skipZk ? '--skip-zk' : '';
-        const compileCmd = `${compilerBin} compile ${zkFlag} "${sourceFilePath}" "${outDir}"`.replace(/\s+/g, ' ');
+        const compactPathFlag = `--compact-path "${path.join(workspaceRoot, 'contracts')}:${modulesRoot}"`;
+        const compileCmd = `${compilerBin} compile ${zkFlag} ${compactPathFlag} "${sourceFilePath}" "${outDir}"`.replace(/\s+/g, ' ');
 
         let stdout = '';
         let stderr = '';

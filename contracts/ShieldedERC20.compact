@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Compact Contracts — Standalone Shielded ERC20 Token
+// Demonstrates privacy-preserving shielded token operations on Midnight.
+
+pragma language_version >= 0.22.0;
+
+import
+  { ShieldedCoinInfo,
+    ShieldedSendResult,
+    sendImmediateShielded,
+    mintShieldedToken,
+    shieldedBurnAddress,
+    ZswapCoinPublicKey,
+    ContractAddress,
+    Either,
+    left,
+    ownPublicKey,
+    receiveShielded,
+    evolveNonce,
+    upgradeFromTransient,
+    Counter }
+  from CompactStandardLibrary;
+
+import "./modules/utils/Utils" prefix Utils_;
+
+// Public state
+export ledger _counter: Counter;
+export ledger _nonce: Bytes<32>;
+export ledger _totalSupply: Uint<128>;
+export ledger _domain: Bytes<32>;
+export ledger _name: Opaque<"string">;
+export ledger _symbol: Opaque<"string">;
+export ledger _decimals: Uint<8>;
+export ledger _type: Bytes<32>;
+export ledger _isInitialized: Boolean;
+
+constructor() {
+  _counter.increment(0);
+}
+
+/**
+ * Initializes the contract by setting the initial nonce and token metadata.
+ */
+export circuit initialize(
+                 initNonce: Bytes<32>,
+                 name_: Opaque<"string">,
+                 symbol_: Opaque<"string">,
+                 decimals_: Uint<8>,
+                 domain_: Bytes<32>
+                 ): [] {
+  assert(!_isInitialized, "ShieldedToken: already initialized");
+  _isInitialized = true;
+  _nonce = disclose(initNonce);
+  _domain = disclose(domain_);
+  _name = disclose(name_);
+  _symbol = disclose(symbol_);
+  _decimals = disclose(decimals_);
+}
+
+export circuit name(): Opaque<"string"> {
+  assert(_isInitialized, "ShieldedToken: not initialized");
+  return _name;
+}
+
+export circuit symbol(): Opaque<"string"> {
+  assert(_isInitialized, "ShieldedToken: not initialized");
+  return _symbol;
+}
+
+export circuit decimals(): Uint<8> {
+  assert(_isInitialized, "ShieldedToken: not initialized");
+  return _decimals;
+}
+
+export circuit tokenType(): Bytes<32> {
+  assert(_isInitialized, "ShieldedToken: not initialized");
+  return _type;
+}
+
+export circuit totalSupply(): Uint<128> {
+  assert(_isInitialized, "ShieldedToken: not initialized");
+  return _totalSupply;
+}
+
+export circuit mint(
+  recipient: Either<ZswapCoinPublicKey, ContractAddress>,
+  amount: Uint<64>
+): ShieldedCoinInfo {
+  assert(_isInitialized, "ShieldedToken: not initialized");
+  assert(!Utils_isKeyOrAddressZero(recipient), "ShieldedToken: invalid recipient");
+
+  _counter.increment(1);
+  const newNonce = evolveNonce(_counter, _nonce);
+  _nonce = newNonce;
+  const ret = mintShieldedToken(_domain, disclose(amount), _nonce, disclose(recipient));
+  if (_type == pad(32, "")) {
+    _type = ret.color;
+  }
+  _totalSupply = _totalSupply + disclose(amount) as Uint<128>;
+  return ret;
+}
+
+export circuit burn(coin: ShieldedCoinInfo, amount: Uint<128>): ShieldedSendResult {
+  assert(_isInitialized, "ShieldedToken: not initialized");
+  assert(coin.color == _type, "ShieldedToken: token not created from this contract");
+  assert(coin.value >= amount, "ShieldedToken: insufficient token amount to burn");
+
+  receiveShielded(disclose(coin));
+  _totalSupply = _totalSupply - disclose(amount);
+
+  const sendRes = sendImmediateShielded(disclose(coin), shieldedBurnAddress(), disclose(amount));
+  if (sendRes.change.is_some) {
+    const caller = left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
+    sendImmediateShielded(sendRes.change.value, caller, sendRes.change.value.value);
+  }
+
+  return sendRes;
+}

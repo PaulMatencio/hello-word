@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT
+// OpenZeppelin Compact Contracts — Standalone Ownable Vault
+// Demonstrates single-owner access control using the OpenZeppelin Ownable pattern.
+
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+import "./modules/access/Ownable" prefix Ownable_;
+import "./modules/utils/Identity" prefix Identity_;
+
+export { Identity_UserSecretKey, Identity_AdminPublicKey };
+export { Identity_deriveAdminPublicKey };
+export { Ownable__owner };
+
+// Vault public state
+export ledger vaultBalance: Uint<64>;
+export ledger vaultConfigValue: Uint<64>;
+
+// Identity witness providing private 32-byte secret
+witness getUserSecret(): Identity_UserSecretKey;
+
+/**
+ * Initializes the contract and pins the initial owner to the deployer's
+ * derived admin public key.
+ */
+constructor(initialConfig: Uint<64>) {
+  const adminKey = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_initialize(adminKey);
+  vaultConfigValue = disclose(initialConfig);
+  vaultBalance = 0;
+}
+
+// Returns current contract owner
+export circuit owner(): Identity_AdminPublicKey {
+  return Ownable_owner();
+}
+
+// Transfers ownership to a new admin key. Restricted to current owner.
+export circuit transferOwnership(newOwner: Identity_AdminPublicKey): [] {
+  const caller = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_transferOwnership(caller, newOwner);
+}
+
+// Renounces contract ownership. Restricted to current owner.
+export circuit renounceOwnership(): [] {
+  const caller = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_renounceOwnership(caller);
+}
+
+// Updates vault configuration. Guarded: only current owner can execute.
+export circuit setVaultConfig(newConfig: Uint<64>): [] {
+  const caller = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_assertOnlyOwner(caller);
+  vaultConfigValue = disclose(newConfig);
+}
+
+// Reads current vault configuration
+export circuit getVaultConfig(): Uint<64> {
+  return vaultConfigValue;
+}
+
+// Deposits funds into the vault balance.
+export circuit deposit(amount: Uint<64>): [] {
+  vaultBalance = vaultBalance + disclose(amount) as Uint<64>;
+}
+
+// Withdraws funds from vault balance. Restricted to current owner.
+export circuit withdraw(amount: Uint<64>): [] {
+  const caller = disclose(Identity_deriveAdminPublicKey(getUserSecret()));
+  Ownable_assertOnlyOwner(caller);
+  assert(vaultBalance >= amount, "OwnableVault: insufficient balance");
+  vaultBalance = vaultBalance - disclose(amount) as Uint<64>;
+}

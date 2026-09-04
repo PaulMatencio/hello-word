@@ -25,8 +25,11 @@ import {
     Save,
     Download,
     Play,
+    PackageCheck,
 } from 'lucide-react';
 import { useToast } from '@/src/presentation/context/ToastContext';
+import { getCleanContractBaseName, CONTRACT_PATHS } from '@/src/lib/contract-utils';
+import { ExportDappModal } from './ExportDappModal';
 
 interface AiMessage {
     id: string;
@@ -40,6 +43,8 @@ interface AiMessage {
 interface AiCopilotPanelProps {
     filename: string;
     sourceCode: string;
+    contractFilename?: string;
+    contractCode?: string;
     compilerResult: any;
     testResult: any;
     onApplyCodeToEditor: (code: string) => void;
@@ -51,6 +56,8 @@ interface AiCopilotPanelProps {
 export function AiCopilotPanel({
     filename,
     sourceCode,
+    contractFilename,
+    contractCode,
     compilerResult,
     testResult,
     onApplyCodeToEditor,
@@ -60,6 +67,7 @@ export function AiCopilotPanel({
 }: AiCopilotPanelProps) {
     const toast = useToast();
     const [isMounted, setIsMounted] = useState<boolean>(false);
+    const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
     const [messages, setMessages] = useState<AiMessage[]>([
         {
             id: 'welcome',
@@ -192,6 +200,19 @@ Ask a question below or click one of the quick actions to get started!`,
         const controller = new AbortController();
         setAbortController(controller);
 
+        // If a non-compact file is currently open in the editor (e.g. install script or test file),
+        // use the active Compact contract code and filename for contract-centric actions.
+        const shouldUseContractContext =
+            (action === 'generate_client' ||
+                action === 'generate_tests' ||
+                action === 'audit_zk' ||
+                action === 'explain') &&
+            !filename.endsWith('.compact') &&
+            Boolean(contractCode && contractFilename);
+
+        const effectiveCode = shouldUseContractContext ? (contractCode as string) : sourceCode;
+        const effectiveFilename = shouldUseContractContext ? (contractFilename as string) : filename;
+
         try {
             const res = await fetch('/api/ai/compact', {
                 method: 'POST',
@@ -199,8 +220,8 @@ Ask a question below or click one of the quick actions to get started!`,
                 body: JSON.stringify({
                     prompt: textPrompt,
                     action,
-                    code: sourceCode,
-                    filename,
+                    code: effectiveCode,
+                    filename: effectiveFilename,
                     diagnostics: compilerResult?.diagnostics || [],
                     compilerOutput: compilerResult?.rawOutput || compilerResult?.error || '',
                     dtsContent: compilerResult?.dts || '',
@@ -307,7 +328,18 @@ Ask a question below or click one of the quick actions to get started!`,
     };
 
     const detectFileMeta = (code: string, language: string, rawFilename: string) => {
-        const baseName = rawFilename.replace(/\.compact$/, '');
+        // Derive clean contract base name from contractFilename or rawFilename
+        let baseName = getCleanContractBaseName(contractFilename);
+        if (!baseName || baseName === 'contract') {
+            baseName = getCleanContractBaseName(rawFilename);
+        }
+
+        // Also check if the code snippet itself references a managed contract path
+        const managedMatch = code.match(/contracts\/managed\/([a-zA-Z0-9_-]+)/i);
+        if (managedMatch && managedMatch[1]) {
+            baseName = getCleanContractBaseName(managedMatch[1]);
+        }
+
         const lang = (language || '').toLowerCase().trim();
         const trimmed = code.trim();
 
@@ -595,11 +627,13 @@ Ask a question below or click one of the quick actions to get started!`,
 
     // Save entire markdown documentation to workspace
     const handleSaveFullDocToFile = async (fullContent: string) => {
-        const baseName = filename.replace(/\.compact$/, '');
-        const targetPath = prompt(`Enter workspace path to save SDK documentation:`, `docs/${baseName}-sdk.md`);
+        const baseName = getCleanContractBaseName(contractFilename || filename);
+        const defaultDocPath = CONTRACT_PATHS.doc(baseName);
+        const targetPath = prompt(`Enter workspace path to save SDK documentation:`, defaultDocPath);
         if (!targetPath) return;
 
-        const parts = targetPath.trim().split('/');
+        const cleanPath = targetPath.trim().replace(/\\/g, '/');
+        const parts = cleanPath.split('/').filter(Boolean);
         const saveName = parts.pop() || `${baseName}-sdk.md`;
         const saveFolder = parts.join('/') || 'docs';
 
@@ -640,7 +674,7 @@ Ask a question below or click one of the quick actions to get started!`,
 
     // Download full markdown documentation
     const handleDownloadFullDoc = (fullContent: string) => {
-        const baseName = filename.replace(/\.compact$/, '');
+        const baseName = getCleanContractBaseName(contractFilename || filename);
         const docName = `${baseName}-sdk.md`;
         const blob = new Blob([fullContent], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
@@ -795,6 +829,17 @@ Ask a question below or click one of the quick actions to get started!`,
                                     <span>Save Tests (.ts)</span>
                                 </button>
                             )}
+
+                            {/* 5. Export DApp Bundle for Gemini */}
+                            <button
+                                onClick={() => setIsExportModalOpen(true)}
+                                disabled={isStreaming}
+                                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600/30 via-purple-600/30 to-cyan-600/30 text-cyan-200 hover:text-white hover:from-indigo-600 hover:to-cyan-600 text-[11px] font-bold border border-cyan-500/40 transition-all cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+                                title="Export full DApp bundle (.zip) with ZKIR and master prompt for Gemini"
+                            >
+                                <PackageCheck className="h-3.5 w-3.5 text-cyan-300" />
+                                <span>Export for Gemini (.zip)</span>
+                            </button>
                         </div>
                     </div>
                 )}
@@ -917,6 +962,13 @@ Ask a question below or click one of the quick actions to get started!`,
                             <span className="font-bold text-xs text-white">Gemini 3.7 Flash</span>
                             <span className="rounded-full bg-indigo-500/10 text-indigo-300 px-1.5 py-0.2 text-[10px] font-mono border border-indigo-500/30">
                                 Copilot
+                            </span>
+                            <span
+                                className="rounded-full bg-emerald-500/10 text-emerald-300 px-1.5 py-0.2 text-[10px] font-mono border border-emerald-500/30 flex items-center space-x-1"
+                                title="Midnight Expert Skills (.agents/plugins) dynamically injected"
+                            >
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                <span>Expert Skills</span>
                             </span>
                         </div>
                     </div>
@@ -1170,6 +1222,13 @@ Ask a question below or click one of the quick actions to get started!`,
                     </div>
                 </div>
             </div>
+
+            {/* Export DApp Bundle for Gemini Modal */}
+            <ExportDappModal
+                isOpen={isExportModalOpen}
+                onClose={() => setIsExportModalOpen(false)}
+                contractFilename={contractFilename || filename}
+            />
         </div>
     );
 }

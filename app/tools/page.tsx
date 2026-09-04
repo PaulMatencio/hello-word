@@ -70,6 +70,10 @@ interface ContractTemplate {
   category: string;
   description: string;
   code: string;
+  templateType?: 'contract' | 'module';
+  deployable?: boolean;
+  file?: string;
+  dependencies?: string[];
 }
 
 export default function ToolsAndDoctorPage() {
@@ -92,6 +96,7 @@ export default function ToolsAndDoctorPage() {
 
   // Templates state
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
+  const [templateTypeFilter, setTemplateTypeFilter] = useState<'all' | 'contract' | 'module'>('all');
   const [templateCategory, setTemplateCategory] = useState('all');
   const [selectedTemplate, setSelectedTemplate] = useState<ContractTemplate | null>(null);
   const [isTemplatesLoading, setIsTemplatesLoading] = useState(false);
@@ -113,23 +118,17 @@ export default function ToolsAndDoctorPage() {
     }
   };
 
-  // Fetch Codes
-  const fetchCodes = async (q: string, src: string, cat: string) => {
+  // Fetch Status Codes
+  const fetchCodes = async () => {
     setIsCodesLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (q) params.set('q', q);
-      if (src && src !== 'all') params.set('source', src);
-      if (cat && cat !== 'all') params.set('category', cat);
-      params.set('limit', '60');
-
-      const res = await fetch(`/api/diagnostics/codes?${params.toString()}`);
+      const res = await fetch('/api/diagnostics/codes');
       const data = await res.json();
       if (data.success) {
-        setCodes(data.entries);
+        setCodes(data.codes);
         setTotalCodes(data.total);
-        if (data.sources) setAvailableSources(data.sources);
-        if (data.categories) setAvailableCategories(data.categories);
+        setAvailableSources(data.sources || []);
+        setAvailableCategories(data.categories || []);
       }
     } catch (err) {
       console.error('Failed to fetch status codes:', err);
@@ -157,29 +156,46 @@ export default function ToolsAndDoctorPage() {
 
   useEffect(() => {
     runDoctor();
-    fetchCodes('', 'all', 'all');
+    fetchCodes();
     fetchTemplates();
   }, []);
 
+  // Filtered Status Codes
+  const filteredCodes = codes.filter((c) => {
+    const matchesSearch =
+      searchQuery === '' ||
+      c.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.description.toLowerCase().includes(searchQuery.toLowerCase());
+
+    const matchesSource = selectedSource === 'all' || c.source.toLowerCase() === selectedSource.toLowerCase();
+    const matchesCategory =
+      selectedCategory === 'all' || c.category.toLowerCase() === selectedCategory.toLowerCase();
+
+    return matchesSearch && matchesSource && matchesCategory;
+  });
+
   const handleSearchChange = (val: string) => {
     setSearchQuery(val);
-    fetchCodes(val, selectedSource, selectedCategory);
   };
 
   const handleSourceChange = (src: string) => {
     setSelectedSource(src);
-    fetchCodes(searchQuery, src, selectedCategory);
   };
 
   const handleCategoryChange = (cat: string) => {
     setSelectedCategory(cat);
-    fetchCodes(searchQuery, selectedSource, cat);
   };
 
+  // Action handlers
   const handleLoadTemplateIntoIde = (tmpl: ContractTemplate) => {
+    const rawFile = tmpl.file || `${tmpl.id}.compact`;
+    const cleanFilename = rawFile.split('/').pop() || rawFile;
     localStorage.setItem('midnight_ide_source_code', tmpl.code);
-    localStorage.setItem('midnight_ide_filename', `${tmpl.id}.compact`);
+    localStorage.setItem('midnight_ide_filename', cleanFilename);
     localStorage.setItem('midnight_ide_is_dirty', 'true');
+    localStorage.setItem('compact_active_file', rawFile);
+    localStorage.setItem('compact_editor_code', tmpl.code);
     router.push('/ide');
   };
 
@@ -189,10 +205,19 @@ export default function ToolsAndDoctorPage() {
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  const filteredTemplates =
-    templateCategory === 'all'
-      ? templates
-      : templates.filter((t) => t.category.toLowerCase() === templateCategory.toLowerCase());
+  const filteredTemplates = templates.filter((t) => {
+    const matchesType =
+      templateTypeFilter === 'all'
+        ? true
+        : t.templateType === templateTypeFilter;
+
+    const matchesCategory =
+      templateCategory === 'all'
+        ? true
+        : t.category.toLowerCase().includes(templateCategory.toLowerCase());
+
+    return matchesType && matchesCategory;
+  });
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6 lg:p-8 space-y-6">
@@ -557,15 +582,49 @@ export default function ToolsAndDoctorPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column: Template List */}
           <div className="lg:col-span-5 space-y-4">
+            {/* Type Toggle: All vs Deployable vs Modules */}
+            <div className="flex items-center p-1 bg-midnight-900/80 rounded-xl border border-white/5 text-xs font-semibold">
+              <button
+                onClick={() => setTemplateTypeFilter('all')}
+                className={`flex-1 py-1.5 px-2 rounded-lg transition-all cursor-pointer ${
+                  templateTypeFilter === 'all'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                All ({templates.length})
+              </button>
+              <button
+                onClick={() => setTemplateTypeFilter('contract')}
+                className={`flex-1 py-1.5 px-2 rounded-lg transition-all cursor-pointer ${
+                  templateTypeFilter === 'contract'
+                    ? 'bg-emerald-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Deployable ({templates.filter((t) => t.deployable).length})
+              </button>
+              <button
+                onClick={() => setTemplateTypeFilter('module')}
+                className={`flex-1 py-1.5 px-2 rounded-lg transition-all cursor-pointer ${
+                  templateTypeFilter === 'module'
+                    ? 'bg-amber-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                OZ Modules ({templates.filter((t) => !t.deployable).length})
+              </button>
+            </div>
+
             {/* Category Filter Pills */}
-            <div className="flex items-center space-x-2 pb-2 overflow-x-auto">
-              {['all', 'Tokens', 'Security', 'Applications'].map((cat) => (
+            <div className="flex items-center space-x-2 pb-1 overflow-x-auto scrollbar-none">
+              {['all', 'Tokens', 'Security', 'Applications', 'Modules'].map((cat) => (
                 <button
                   key={cat}
                   onClick={() => setTemplateCategory(cat)}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                  className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer whitespace-nowrap ${
                     templateCategory === cat
-                      ? 'bg-purple-600 text-white shadow-md'
+                      ? 'bg-slate-700 text-white shadow-sm'
                       : 'bg-midnight-900 text-slate-400 hover:text-white border border-white/5'
                   }`}
                 >
@@ -574,7 +633,7 @@ export default function ToolsAndDoctorPage() {
               ))}
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
               {filteredTemplates.map((tmpl) => {
                 const isSelected = selectedTemplate?.id === tmpl.id;
                 return (
@@ -587,13 +646,24 @@ export default function ToolsAndDoctorPage() {
                         : 'bg-midnight-950/60 border-white/5 hover:border-white/20'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-bold text-white">{tmpl.name}</h4>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium">
-                        {tmpl.category}
-                      </span>
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-bold text-white truncate">{tmpl.name}</h4>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {tmpl.deployable ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
+                            Deployable
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">
+                            OZ Module
+                          </span>
+                        )}
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-medium">
+                          {tmpl.category}
+                        </span>
+                      </div>
                     </div>
-                    <p className="text-xs text-slate-400 mt-1 leading-relaxed line-clamp-2">
+                    <p className="text-xs text-slate-400 mt-1.5 leading-relaxed line-clamp-2">
                       {tmpl.description}
                     </p>
                   </div>
@@ -612,8 +682,22 @@ export default function ToolsAndDoctorPage() {
                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
                       <Code2 className="h-4 w-4 text-purple-400" />
                       <span>{selectedTemplate.name}</span>
+                      {selectedTemplate.deployable ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-semibold">
+                          Deployable Contract
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">
+                          Building Block Module
+                        </span>
+                      )}
                     </h3>
-                    <p className="text-[11px] text-slate-400">{selectedTemplate.description}</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">{selectedTemplate.description}</p>
+                    {selectedTemplate.file && (
+                      <p className="text-[10px] text-purple-400 font-mono mt-1">
+                        File: {selectedTemplate.file}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex items-center space-x-2">

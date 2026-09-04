@@ -35,6 +35,9 @@ import {
     Plus,
     ShieldCheck,
     Scale,
+    FolderTree,
+    AlertTriangle,
+    PackageCheck,
 } from 'lucide-react';
 import type { OnMount } from '@monaco-editor/react';
 import { Breadcrumbs } from '@/components/Breadcrumbs';
@@ -49,6 +52,9 @@ import { COMPACT_TEMPLATES, CompactTemplate } from '@/src/infrastructure/ide/com
 import { AiCopilotPanel } from '@/components/AiCopilotPanel';
 import { FormalVerificationPanel } from '@/components/FormalVerificationPanel';
 import type { FormalVerificationReport } from '@/app/api/compiler/verify/route';
+import { FileExplorer } from '@/components/FileExplorer';
+import type { WorkspaceFileNode } from '@/app/api/workspace/files/route';
+import { ExportDappModal } from '@/components/ExportDappModal';
 
 // Dynamically import Monaco to prevent SSR issues
 const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
@@ -73,10 +79,30 @@ export default function CompactIdePage() {
     const [filename, setFilename] = useState<string>(COMPACT_TEMPLATES[0].filename);
     const [sourceCode, setSourceCode] = useState<string>(COMPACT_TEMPLATES[0].code);
     const [isDirty, setIsDirty] = useState<boolean>(false);
+    const lastSavedContentRef = useRef<string>(COMPACT_TEMPLATES[0].code);
+
+    // Track the last active .compact contract so AI actions retain contract context when browsing other files
+    const lastCompactContractRef = useRef<{ filename: string; code: string }>({
+        filename: COMPACT_TEMPLATES[0].filename,
+        code: COMPACT_TEMPLATES[0].code,
+    });
+
+    useEffect(() => {
+        if (filename.endsWith('.compact')) {
+            lastCompactContractRef.current = {
+                filename,
+                code: sourceCode,
+            };
+        }
+    }, [filename, sourceCode]);
+
     const [skipZk, setSkipZk] = useState<boolean>(false);
     const [persistToManaged, setPersistToManaged] = useState<boolean>(true);
     const [isCompiling, setIsCompiling] = useState<boolean>(false);
     const [isSaving, setIsSaving] = useState<boolean>(false);
+    const [isExplorerOpen, setIsExplorerOpen] = useState<boolean>(true);
+    const [activeFilePath, setActiveFilePath] = useState<string>('contracts/fungible-token.compact');
+    const [activeLanguage, setActiveLanguage] = useState<string>('compact');
 
     // Workspace files loading state
     const [isOpenModalOpen, setIsOpenModalOpen] = useState<boolean>(false);
@@ -102,6 +128,15 @@ export default function CompactIdePage() {
     const [saveAsFolder, setSaveAsFolder] = useState<string>('contracts');
     const [isSavingWorkspace, setIsSavingWorkspace] = useState<boolean>(false);
 
+    // Export DApp Bundle Modal State
+    const [isExportDappModalOpen, setIsExportDappModalOpen] = useState<boolean>(false);
+
+    // Unsaved Changes Confirmation Modal State
+    const [isUnsavedModalOpen, setIsUnsavedModalOpen] = useState<boolean>(false);
+    const [pendingFileAction, setPendingFileAction] = useState<(() => void | Promise<void>) | null>(null);
+    const [pendingTargetName, setPendingTargetName] = useState<string>('');
+    const [isSavingBeforeLoad, setIsSavingBeforeLoad] = useState<boolean>(false);
+
     // Hydration mount state
     const [isMounted, setIsMounted] = useState<boolean>(false);
 
@@ -109,6 +144,11 @@ export default function CompactIdePage() {
     const [leftPanelWidth, setLeftPanelWidth] = useState<number>(56);
     const [isDraggingSplitter, setIsDraggingSplitter] = useState<boolean>(false);
     const splitWorkspaceRef = useRef<HTMLDivElement>(null);
+
+    // Resizable File Explorer State (pixel width for left explorer sidebar)
+    const [explorerWidth, setExplorerWidth] = useState<number>(260);
+    const [isDraggingExplorerSplitter, setIsDraggingExplorerSplitter] = useState<boolean>(false);
+    const leftSubContainerRef = useRef<HTMLDivElement>(null);
 
     // Keep refs for Monaco keyboard command bindings
     const handleQuickSaveRef = useRef<() => void>(() => {});
@@ -118,24 +158,40 @@ export default function CompactIdePage() {
     useEffect(() => {
         setIsMounted(true);
         try {
+            const handoverCode = localStorage.getItem('compact_editor_code');
+            const handoverFile = localStorage.getItem('compact_active_file');
+            if (handoverCode && handoverFile) {
+                const cleanName = handoverFile.split('/').pop() || handoverFile;
+                localStorage.setItem('midnight_ide_source_code', handoverCode);
+                localStorage.setItem('midnight_ide_filename', cleanName);
+                localStorage.setItem('midnight_ide_is_dirty', 'true');
+                localStorage.removeItem('compact_editor_code');
+                localStorage.removeItem('compact_active_file');
+            }
+
             const savedCode = localStorage.getItem('midnight_ide_source_code');
             const savedFilename = localStorage.getItem('midnight_ide_filename');
             const savedTab = localStorage.getItem('midnight_ide_active_tab') as OutputTab | null;
             const savedDirty = localStorage.getItem('midnight_ide_is_dirty');
             const savedSplitWidth = localStorage.getItem('midnight_ide_split_width');
+            const savedLastSaved = localStorage.getItem('midnight_ide_last_saved_code');
 
             if (savedCode && savedFilename) {
                 setSourceCode(savedCode);
                 setFilename(savedFilename);
                 setSaveAsFilename(savedFilename);
+                lastSavedContentRef.current = savedLastSaved !== null ? savedLastSaved : savedCode;
                 const matched = COMPACT_TEMPLATES.find((t) => t.filename === savedFilename);
                 if (matched) setSelectedTemplate(matched);
                 if (editorRef.current) {
                     editorRef.current.setValue(savedCode);
                 }
+            } else {
+                lastSavedContentRef.current = savedLastSaved !== null ? savedLastSaved : COMPACT_TEMPLATES[0].code;
             }
             if (savedDirty !== null) {
-                setIsDirty(savedDirty === 'true');
+                const isActuallyDirty = savedCode !== null && savedCode !== lastSavedContentRef.current;
+                setIsDirty(isActuallyDirty);
             }
             if (savedTab) {
                 setActiveTab(savedTab);
@@ -146,9 +202,46 @@ export default function CompactIdePage() {
                     setLeftPanelWidth(parsed);
                 }
             }
+            const savedExplorer = localStorage.getItem('midnight_ide_explorer_open');
+            if (savedExplorer !== null) {
+                setIsExplorerOpen(savedExplorer === 'true');
+            }
+            const savedExplorerWidth = localStorage.getItem('midnight_ide_explorer_width');
+            if (savedExplorerWidth) {
+                const parsed = parseInt(savedExplorerWidth, 10);
+                if (!isNaN(parsed) && parsed >= 180 && parsed <= 600) {
+                    setExplorerWidth(parsed);
+                }
+            }
+            const savedActiveFile = localStorage.getItem('midnight_ide_active_filepath');
+            if (savedActiveFile) {
+                setActiveFilePath(savedActiveFile);
+            }
+            const savedActiveLang = localStorage.getItem('midnight_ide_active_language');
+            if (savedActiveLang) {
+                setActiveLanguage(savedActiveLang);
+            }
         } catch {
             // Ignore localStorage errors
         }
+    }, []);
+
+    // Global keyboard shortcuts (Ctrl+B / Cmd+B for File Explorer)
+    useEffect(() => {
+        const handleGlobalKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+                e.preventDefault();
+                setIsExplorerOpen((prev) => {
+                    const next = !prev;
+                    try {
+                        localStorage.setItem('midnight_ide_explorer_open', String(next));
+                    } catch {}
+                    return next;
+                });
+            }
+        };
+        window.addEventListener('keydown', handleGlobalKeyDown);
+        return () => window.removeEventListener('keydown', handleGlobalKeyDown);
     }, []);
 
     // Split pane mouse drag listener for smooth horizontal resizing
@@ -179,6 +272,35 @@ export default function CompactIdePage() {
         };
     }, [isDraggingSplitter]);
 
+    // File Explorer mouse drag listener for horizontal resizing
+    useEffect(() => {
+        if (!isDraggingExplorerSplitter) return;
+
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!leftSubContainerRef.current) return;
+            const containerRect = leftSubContainerRef.current.getBoundingClientRect();
+            const relativeX = e.clientX - containerRect.left;
+            const minWidth = 180;
+            const maxWidth = Math.max(minWidth, containerRect.width - 240);
+            const clamped = Math.round(Math.min(Math.max(relativeX, minWidth), Math.min(maxWidth, 600)));
+            setExplorerWidth(clamped);
+            try {
+                localStorage.setItem('midnight_ide_explorer_width', clamped.toString());
+            } catch {}
+        };
+
+        const handleMouseUp = () => {
+            setIsDraggingExplorerSplitter(false);
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => {
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+        };
+    }, [isDraggingExplorerSplitter]);
+
     // Persist editor workspace session to localStorage ONLY after client has mounted
     useEffect(() => {
         if (!isMounted) return;
@@ -198,42 +320,108 @@ export default function CompactIdePage() {
         }
     }, [isMounted, sourceCode, filename, isDirty, activeTab]);
 
-    // Quick Save (to contracts/<filename>)
-    const handleQuickSave = async () => {
+    // Prevent accidental navigation/tab closing when there are unsaved edits
+    useEffect(() => {
+        const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (isDirty) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        };
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [isDirty]);
+
+    // Quick Save (to activeFilePath or contracts/<filename>)
+    const handleQuickSave = async (): Promise<boolean> => {
         if (!sourceCode.trim()) {
             toast.error('Save Error', 'Source code cannot be empty.');
-            return;
+            return false;
         }
-
-        const safeFilename = filename.trim().endsWith('.compact')
-            ? filename.trim()
-            : `${filename.trim()}.compact`;
 
         setIsSaving(true);
         try {
-            const res = await fetch('/api/compiler/save', {
+            const targetPath = activeFilePath || (filename.includes('/') ? filename : `contracts/${filename}`);
+            const res = await fetch('/api/workspace/files', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    sourceCode,
-                    filename: safeFilename,
-                    folder: 'contracts',
+                    path: targetPath,
+                    content: sourceCode,
                 }),
             });
 
             const data = await res.json();
             if (!res.ok || !data.success) {
-                throw new Error(data.error || 'Failed to save contract');
+                throw new Error(data.error || 'Failed to save file');
             }
 
             setIsDirty(false);
-            toast.success('Contract Saved', `Saved to ${data.data.folder}/${data.data.filename}`);
+            lastSavedContentRef.current = sourceCode;
+            try {
+                localStorage.setItem('midnight_ide_is_dirty', 'false');
+                localStorage.setItem('midnight_ide_last_saved_code', sourceCode);
+            } catch {}
+            toast.success('File Saved', `Saved to ${data.data.path}`);
+            return true;
         } catch (err: any) {
             console.error('Quick save failed:', err);
-            toast.error('Save Failed', err.message || 'Could not save contract to workspace');
+            toast.error('Save Failed', err.message || 'Could not save file to workspace');
+            return false;
         } finally {
             setIsSaving(false);
         }
+    };
+
+    // Helper to guard file/template loading when the editor has unsaved changes
+    const confirmIfUnsaved = (action: () => void | Promise<void>, targetDescription: string) => {
+        const hasUnsavedEdits = isDirty && sourceCode !== lastSavedContentRef.current;
+        if (hasUnsavedEdits) {
+            setPendingFileAction(() => action);
+            setPendingTargetName(targetDescription);
+            setIsUnsavedModalOpen(true);
+            return;
+        }
+        // If content has not actually changed, ensure isDirty is false and proceed immediately
+        setIsDirty(false);
+        try {
+            localStorage.setItem('midnight_ide_is_dirty', 'false');
+        } catch {}
+        action();
+    };
+
+    const handleConfirmSaveAndLoad = async () => {
+        if (!pendingFileAction) return;
+        setIsSavingBeforeLoad(true);
+        try {
+            const saved = await handleQuickSave();
+            if (saved) {
+                const actionToRun = pendingFileAction;
+                setPendingFileAction(null);
+                setIsUnsavedModalOpen(false);
+                await actionToRun();
+            }
+        } finally {
+            setIsSavingBeforeLoad(false);
+        }
+    };
+
+    const handleConfirmDiscardAndLoad = async () => {
+        if (!pendingFileAction) return;
+        setIsDirty(false);
+        try {
+            localStorage.setItem('midnight_ide_is_dirty', 'false');
+        } catch {}
+        const actionToRun = pendingFileAction;
+        setPendingFileAction(null);
+        setIsUnsavedModalOpen(false);
+        await actionToRun();
+    };
+
+    const handleCancelUnsavedModal = () => {
+        setPendingFileAction(null);
+        setPendingTargetName('');
+        setIsUnsavedModalOpen(false);
     };
 
     // Apply code suggested by Gemini AI Copilot to Monaco Editor & auto-recompile
@@ -324,6 +512,17 @@ export default function CompactIdePage() {
             handleRunTestsRef.current?.();
         });
 
+        // Bind Ctrl+B / Cmd+B to Toggle Explorer
+        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyB, () => {
+            setIsExplorerOpen((prev) => {
+                const next = !prev;
+                try {
+                    localStorage.setItem('midnight_ide_explorer_open', String(next));
+                } catch {}
+                return next;
+            });
+        });
+
         // Ensure Monaco editor displays the cached source code if already loaded
         try {
             const savedCode = localStorage.getItem('midnight_ide_source_code');
@@ -356,71 +555,92 @@ export default function CompactIdePage() {
 
     // Template switcher
     const handleSelectTemplate = (tmpl: CompactTemplate) => {
-        setSelectedTemplate(tmpl);
-        setFilename(tmpl.filename);
-        setSaveAsFilename(tmpl.filename);
-        setSourceCode(tmpl.code);
-        setIsDirty(false);
-        setCompilationResult(null);
-        try {
-            localStorage.setItem('midnight_ide_source_code', tmpl.code);
-            localStorage.setItem('midnight_ide_filename', tmpl.filename);
-            localStorage.setItem('midnight_ide_is_dirty', 'false');
-        } catch {
-            // Ignore
-        }
-        if (monacoRef.current && editorRef.current) {
-            const model = editorRef.current.getModel();
-            if (model) {
-                monacoRef.current.editor.setModelMarkers(model, 'compact-compiler', []);
+        confirmIfUnsaved(() => {
+            setSelectedTemplate(tmpl);
+            setFilename(tmpl.filename);
+            setSaveAsFilename(tmpl.filename);
+            const targetPath = `contracts/${tmpl.filename}`;
+            setActiveFilePath(targetPath);
+            setActiveLanguage('compact');
+            lastSavedContentRef.current = tmpl.code;
+            setSourceCode(tmpl.code);
+            setIsDirty(false);
+            setCompilationResult(null);
+            try {
+                localStorage.setItem('midnight_ide_source_code', tmpl.code);
+                localStorage.setItem('midnight_ide_filename', tmpl.filename);
+                localStorage.setItem('midnight_ide_active_filepath', targetPath);
+                localStorage.setItem('midnight_ide_active_language', 'compact');
+                localStorage.setItem('midnight_ide_is_dirty', 'false');
+                localStorage.setItem('midnight_ide_last_saved_code', tmpl.code);
+            } catch {
+                // Ignore
             }
-        }
-        toast.info('Template Loaded', tmpl.title);
+            if (editorRef.current) {
+                editorRef.current.setValue(tmpl.code);
+            }
+            if (monacoRef.current && editorRef.current) {
+                const model = editorRef.current.getModel();
+                if (model) {
+                    monacoRef.current.editor.setModelMarkers(model, 'compact-compiler', []);
+                }
+            }
+            toast.info('Template Loaded', tmpl.title);
+        }, tmpl.title);
     };
 
     // Open a fresh new Compact file initialized with pragma & CompactStandardLibrary
     const handleNewCompactFile = () => {
-        const newCode = `pragma language_version >= 0.23;
+        confirmIfUnsaved(() => {
+            const newCode = `pragma language_version >= 0.23;
 
 import CompactStandardLibrary;
 `;
-        const newFilename = 'my-contract.compact';
-        setFilename(newFilename);
-        setSaveAsFilename(newFilename);
-        setSourceCode(newCode);
-        setIsDirty(true);
-        setCompilationResult(null);
-        setSelectedTemplate({
-            id: 'blank',
-            title: 'Blank Contract',
-            description: 'Clean starter with language pragma and Compact standard library.',
-            filename: newFilename,
-            code: newCode,
-        });
+            const newFilename = 'my-contract.compact';
+            const targetPath = `contracts/${newFilename}`;
+            setFilename(newFilename);
+            setSaveAsFilename(newFilename);
+            setActiveFilePath(targetPath);
+            setActiveLanguage('compact');
+            lastSavedContentRef.current = newCode;
+            setSourceCode(newCode);
+            setIsDirty(false);
+            setCompilationResult(null);
+            setSelectedTemplate({
+                id: 'blank',
+                title: 'Blank Contract',
+                description: 'Clean starter with language pragma and Compact standard library.',
+                filename: newFilename,
+                code: newCode,
+            });
 
-        if (editorRef.current) {
-            editorRef.current.setValue(newCode);
-            editorRef.current.focus();
-            // Move cursor to line 4
-            editorRef.current.setPosition({ lineNumber: 4, column: 1 });
-        }
-
-        if (monacoRef.current && editorRef.current) {
-            const model = editorRef.current.getModel();
-            if (model) {
-                monacoRef.current.editor.setModelMarkers(model, 'compact-compiler', []);
+            if (editorRef.current) {
+                editorRef.current.setValue(newCode);
+                editorRef.current.focus();
+                // Move cursor to line 4
+                editorRef.current.setPosition({ lineNumber: 4, column: 1 });
             }
-        }
 
-        try {
-            localStorage.setItem('midnight_ide_source_code', newCode);
-            localStorage.setItem('midnight_ide_filename', newFilename);
-            localStorage.setItem('midnight_ide_is_dirty', 'true');
-        } catch {
-            // Ignore
-        }
+            if (monacoRef.current && editorRef.current) {
+                const model = editorRef.current.getModel();
+                if (model) {
+                    monacoRef.current.editor.setModelMarkers(model, 'compact-compiler', []);
+                }
+            }
 
-        toast.success('New Compact File Opened', 'Initialized with pragma >= 0.23 and CompactStandardLibrary');
+            try {
+                localStorage.setItem('midnight_ide_source_code', newCode);
+                localStorage.setItem('midnight_ide_filename', newFilename);
+                localStorage.setItem('midnight_ide_active_filepath', targetPath);
+                localStorage.setItem('midnight_ide_active_language', 'compact');
+                localStorage.setItem('midnight_ide_is_dirty', 'false');
+                localStorage.setItem('midnight_ide_last_saved_code', newCode);
+            } catch {
+                // Ignore
+            }
+
+            toast.success('New Compact File Opened', 'Initialized with pragma >= 0.23 and CompactStandardLibrary');
+        }, 'New Contract');
     };
 
     // Fetch workspace files from contracts directory
@@ -446,65 +666,137 @@ import CompactStandardLibrary;
 
     // Load file from workspace
     const handleLoadWorkspaceFile = async (relativePath: string) => {
-        try {
-            const res = await fetch(`/api/compiler/files?file=${encodeURIComponent(relativePath)}`);
-            const data = await res.json();
-            if (data.success && data.data?.content !== undefined) {
-                setFilename(data.data.filename);
-                setSaveAsFilename(data.data.filename);
-                setSourceCode(data.data.content);
-                setIsDirty(false);
-                setCompilationResult(null);
-                setIsOpenModalOpen(false);
-                try {
-                    localStorage.setItem('midnight_ide_source_code', data.data.content);
-                    localStorage.setItem('midnight_ide_filename', data.data.filename);
-                    localStorage.setItem('midnight_ide_is_dirty', 'false');
-                } catch {
-                    // Ignore
+        confirmIfUnsaved(async () => {
+            try {
+                const res = await fetch(`/api/compiler/files?file=${encodeURIComponent(relativePath)}`);
+                const data = await res.json();
+                if (data.success && data.data?.content !== undefined) {
+                    const targetPath = `contracts/${relativePath}`;
+                    setFilename(data.data.filename);
+                    setSaveAsFilename(data.data.filename);
+                    setActiveFilePath(targetPath);
+                    setActiveLanguage('compact');
+                    lastSavedContentRef.current = data.data.content;
+                    setSourceCode(data.data.content);
+                    setIsDirty(false);
+                    setCompilationResult(null);
+                    setIsOpenModalOpen(false);
+                    try {
+                        localStorage.setItem('midnight_ide_source_code', data.data.content);
+                        localStorage.setItem('midnight_ide_filename', data.data.filename);
+                        localStorage.setItem('midnight_ide_active_filepath', targetPath);
+                        localStorage.setItem('midnight_ide_active_language', 'compact');
+                        localStorage.setItem('midnight_ide_is_dirty', 'false');
+                        localStorage.setItem('midnight_ide_last_saved_code', data.data.content);
+                    } catch {
+                        // Ignore
+                    }
+                    if (editorRef.current) {
+                        editorRef.current.setValue(data.data.content);
+                    }
+                    toast.success('Contract Loaded', `Loaded ${targetPath}`);
+                } else {
+                    throw new Error(data.error || 'Failed to read contract content');
                 }
-                toast.success('Contract Loaded', `Loaded contracts/${relativePath}`);
-            } else {
-                throw new Error(data.error || 'Failed to read contract content');
+            } catch (err: any) {
+                toast.error('Load Failed', err.message || 'Could not load contract file');
             }
-        } catch (err: any) {
-            toast.error('Load Failed', err.message || 'Could not load contract file');
-        }
+        }, relativePath);
+    };
+
+    // Load file from workspace explorer (contracts, sdk, examples, docs, scripts, modules, tests, utils)
+    const handleSelectWorkspaceFile = async (node: WorkspaceFileNode) => {
+        if (activeFilePath === node.path) return;
+        confirmIfUnsaved(async () => {
+            try {
+                const res = await fetch(`/api/workspace/files?file=${encodeURIComponent(node.path)}`);
+                const data = await res.json();
+                if (data.success && data.data?.content !== undefined) {
+                    setActiveFilePath(data.data.path);
+                    setFilename(data.data.filename);
+                    setSaveAsFilename(data.data.filename);
+                    lastSavedContentRef.current = data.data.content;
+                    setSourceCode(data.data.content);
+                    setActiveLanguage(data.data.language || 'plaintext');
+                    setIsDirty(false);
+                    setCompilationResult(null);
+
+                    try {
+                        localStorage.setItem('midnight_ide_source_code', data.data.content);
+                        localStorage.setItem('midnight_ide_filename', data.data.filename);
+                        localStorage.setItem('midnight_ide_active_filepath', data.data.path);
+                        localStorage.setItem('midnight_ide_active_language', data.data.language || 'plaintext');
+                        localStorage.setItem('midnight_ide_is_dirty', 'false');
+                        localStorage.setItem('midnight_ide_last_saved_code', data.data.content);
+                    } catch {
+                        // Ignore
+                    }
+
+                    if (editorRef.current) {
+                        editorRef.current.setValue(data.data.content);
+                    }
+
+                    updateEditorMarkers([]);
+                    toast.success('Loaded File', data.data.path);
+                } else {
+                    throw new Error(data.error || 'Failed to read file content');
+                }
+            } catch (err: any) {
+                toast.error('Load Failed', err.message || 'Could not load workspace file');
+            }
+        }, node.name);
     };
 
     // Open from local disk (Native File Picker or input fallback)
     const handleNativeFileOpen = async () => {
-        if ('showOpenFilePicker' in window) {
-            try {
-                const [fileHandle] = await (window as any).showOpenFilePicker({
-                    types: [
-                        {
-                            description: 'Compact Smart Contract (*.compact)',
-                            accept: {
-                                'text/plain': ['.compact', '.txt'],
+        confirmIfUnsaved(async () => {
+            if ('showOpenFilePicker' in window) {
+                try {
+                    const [fileHandle] = await (window as any).showOpenFilePicker({
+                        types: [
+                            {
+                                description: 'Compact Smart Contract (*.compact)',
+                                accept: {
+                                    'text/plain': ['.compact', '.txt'],
+                                },
                             },
-                        },
-                    ],
-                    multiple: false,
-                });
-                const file = await fileHandle.getFile();
-                const content = await file.text();
-                setFilename(file.name);
-                setSaveAsFilename(file.name);
-                setSourceCode(content);
-                setIsDirty(false);
-                setCompilationResult(null);
-                setIsOpenModalOpen(false);
-                toast.success('File Loaded', `Loaded ${file.name}`);
-                return;
-            } catch (err: any) {
-                if (err.name === 'AbortError') return;
-                console.warn('showOpenFilePicker error, using input fallback:', err);
+                        ],
+                        multiple: false,
+                    });
+                    const file = await fileHandle.getFile();
+                    const content = await file.text();
+                    const targetPath = file.name.includes('/') ? file.name : `contracts/${file.name}`;
+                    setFilename(file.name);
+                    setSaveAsFilename(file.name);
+                    setActiveFilePath(targetPath);
+                    setActiveLanguage('compact');
+                    lastSavedContentRef.current = content;
+                    setSourceCode(content);
+                    setIsDirty(false);
+                    setCompilationResult(null);
+                    setIsOpenModalOpen(false);
+                    try {
+                        localStorage.setItem('midnight_ide_source_code', content);
+                        localStorage.setItem('midnight_ide_filename', file.name);
+                        localStorage.setItem('midnight_ide_active_filepath', targetPath);
+                        localStorage.setItem('midnight_ide_active_language', 'compact');
+                        localStorage.setItem('midnight_ide_is_dirty', 'false');
+                        localStorage.setItem('midnight_ide_last_saved_code', content);
+                    } catch {}
+                    if (editorRef.current) {
+                        editorRef.current.setValue(content);
+                    }
+                    toast.success('File Loaded', `Loaded ${file.name}`);
+                    return;
+                } catch (err: any) {
+                    if (err.name === 'AbortError') return;
+                    console.warn('showOpenFilePicker error, using input fallback:', err);
+                }
             }
-        }
 
-        // Fallback to hidden file input
-        fileInputRef.current?.click();
+            // Fallback to hidden file input
+            fileInputRef.current?.click();
+        }, 'Local File');
     };
 
     // File input fallback change handler
@@ -512,18 +804,36 @@ import CompactStandardLibrary;
         const file = e.target.files?.[0];
         if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const content = event.target?.result as string;
-            setFilename(file.name);
-            setSaveAsFilename(file.name);
-            setSourceCode(content || '');
-            setIsDirty(false);
-            setCompilationResult(null);
-            setIsOpenModalOpen(false);
-            toast.success('File Loaded', `Loaded ${file.name}`);
-        };
-        reader.readAsText(file);
+        confirmIfUnsaved(() => {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const content = event.target?.result as string;
+                const targetPath = file.name.includes('/') ? file.name : `contracts/${file.name}`;
+                setFilename(file.name);
+                setSaveAsFilename(file.name);
+                setActiveFilePath(targetPath);
+                setActiveLanguage('compact');
+                lastSavedContentRef.current = content || '';
+                setSourceCode(content || '');
+                setIsDirty(false);
+                setCompilationResult(null);
+                setIsOpenModalOpen(false);
+                try {
+                    localStorage.setItem('midnight_ide_source_code', content || '');
+                    localStorage.setItem('midnight_ide_filename', file.name);
+                    localStorage.setItem('midnight_ide_active_filepath', targetPath);
+                    localStorage.setItem('midnight_ide_active_language', 'compact');
+                    localStorage.setItem('midnight_ide_is_dirty', 'false');
+                    localStorage.setItem('midnight_ide_last_saved_code', content || '');
+                } catch {}
+                if (editorRef.current) {
+                    editorRef.current.setValue(content || '');
+                }
+                toast.success('File Loaded', `Loaded ${file.name}`);
+            };
+            reader.readAsText(file);
+        }, file.name);
+
         e.target.value = '';
     };
 
@@ -733,7 +1043,12 @@ import CompactStandardLibrary;
                 await writable.write(sourceCode);
                 await writable.close();
                 setFilename(handle.name);
+                lastSavedContentRef.current = sourceCode;
                 setIsDirty(false);
+                try {
+                    localStorage.setItem('midnight_ide_is_dirty', 'false');
+                    localStorage.setItem('midnight_ide_last_saved_code', sourceCode);
+                } catch {}
                 toast.success('Contract Saved', `Saved to ${handle.name}`);
                 setIsSaveAsModalOpen(false);
                 return;
@@ -771,7 +1086,16 @@ import CompactStandardLibrary;
             }
 
             setFilename(data.data.filename);
+            const savedPath = `${data.data.folder}/${data.data.filename}`;
+            setActiveFilePath(savedPath);
+            lastSavedContentRef.current = sourceCode;
             setIsDirty(false);
+            try {
+                localStorage.setItem('midnight_ide_active_filepath', savedPath);
+                localStorage.setItem('midnight_ide_filename', data.data.filename);
+                localStorage.setItem('midnight_ide_is_dirty', 'false');
+                localStorage.setItem('midnight_ide_last_saved_code', sourceCode);
+            } catch {}
             toast.success(
                 'Saved to Workspace Folder',
                 `Saved as ${data.data.folder}/${data.data.filename}`
@@ -798,13 +1122,18 @@ import CompactStandardLibrary;
         a.click();
         URL.revokeObjectURL(url);
         setFilename(safeFilename);
+        lastSavedContentRef.current = sourceCode;
         setIsDirty(false);
+        try {
+            localStorage.setItem('midnight_ide_is_dirty', 'false');
+            localStorage.setItem('midnight_ide_last_saved_code', sourceCode);
+        } catch {}
         toast.success('Contract Saved', `Downloaded ${safeFilename}`);
         setIsSaveAsModalOpen(false);
     };
 
     return (
-        <div className="mx-auto max-w-7xl w-full px-4 py-6 sm:px-6 space-y-6 flex flex-col min-h-[calc(100vh-5rem)]">
+        <div className="mx-auto max-w-8xl w-full px-4 py-6 sm:px-6 space-y-6 flex flex-col min-h-[calc(100vh-5rem)]">
             <Breadcrumbs />
 
             {/* Header & Controls */}
@@ -849,11 +1178,31 @@ import CompactStandardLibrary;
                         <span>New File</span>
                     </button>
 
-                    {/* Open Contract Button */}
+                    {/* Explorer Toggle Button */}
+                    <button
+                        onClick={() => {
+                            const next = !isExplorerOpen;
+                            setIsExplorerOpen(next);
+                            try {
+                                localStorage.setItem('midnight_ide_explorer_open', String(next));
+                            } catch {}
+                        }}
+                        className={`inline-flex items-center space-x-1.5 rounded-xl px-3 py-2 text-xs font-semibold border transition-all cursor-pointer ${
+                            isExplorerOpen
+                                ? 'bg-indigo-600/30 text-white border-indigo-500/50 shadow-md shadow-indigo-950/40'
+                                : 'bg-midnight-900/90 text-slate-400 hover:text-white border-white/5 hover:border-white/20'
+                        }`}
+                        title="Toggle File System Explorer (contracts, sdk, examples, docs, scripts, modules, tests, utils) [Ctrl+B]"
+                    >
+                        <FolderTree className="h-4 w-4 text-indigo-400" />
+                        <span>Explorer</span>
+                    </button>
+
+                    {/* Open from Workspace / Disk Button */}
                     <button
                         onClick={openLoadModal}
-                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 px-3 py-2 text-xs font-semibold text-slate-300 border border-white/10 hover:bg-midnight-800 hover:text-white transition-colors cursor-pointer"
-                        title="Open a .compact contract from local disk or workspace"
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-midnight-900 px-3 py-2 text-xs font-semibold text-slate-300 border border-white/10 hover:bg-midnight-800 transition-colors cursor-pointer"
+                        title="Open .compact file from workspace or local disk"
                     >
                         <FolderOpen className="h-3.5 w-3.5 text-cyan-400" />
                         <span>Open...</span>
@@ -1036,6 +1385,16 @@ import CompactStandardLibrary;
                         <FlaskConical className="h-3.5 w-3.5 text-emerald-400" />
                         <span>All Tests</span>
                     </button>
+
+                    {/* 7. Export DApp Bundle for Gemini */}
+                    <button
+                        onClick={() => setIsExportDappModalOpen(true)}
+                        className="inline-flex items-center space-x-1.5 rounded-xl bg-gradient-to-r from-indigo-600/30 via-purple-600/30 to-cyan-600/30 hover:from-indigo-600/50 hover:to-cyan-600/50 text-cyan-200 border border-cyan-500/40 hover:border-cyan-400 px-3 py-2 text-xs font-bold transition-all cursor-pointer shadow-sm hover:shadow-cyan-500/20"
+                        title="Export all compiled artifacts, ZKIR bytecodes, and master prompt for Gemini to scaffold the frontend"
+                    >
+                        <PackageCheck className="h-3.5 w-3.5 text-cyan-300" />
+                        <span>Export for Gemini</span>
+                    </button>
                 </div>
             </div>
 
@@ -1075,9 +1434,18 @@ import CompactStandardLibrary;
                         type="text"
                         value={filename}
                         onChange={(e) => {
-                            setFilename(e.target.value);
-                            setSaveAsFilename(e.target.value);
+                            const newName = e.target.value;
+                            setFilename(newName);
+                            setSaveAsFilename(newName);
                             setIsDirty(true);
+                            if (activeFilePath) {
+                                const parentDir = activeFilePath.includes('/')
+                                    ? activeFilePath.slice(0, activeFilePath.lastIndexOf('/'))
+                                    : 'contracts';
+                                setActiveFilePath(`${parentDir}/${newName}`);
+                            } else {
+                                setActiveFilePath(`contracts/${newName}`);
+                            }
                         }}
                         className="rounded-lg bg-midnight-950 px-2.5 py-1 text-xs font-mono text-cyan-300 border border-white/10 focus:border-indigo-500 focus:outline-none w-48"
                         placeholder="filename.compact"
@@ -1089,95 +1457,155 @@ import CompactStandardLibrary;
             <div
                 ref={splitWorkspaceRef}
                 className={`flex flex-col lg:flex-row items-stretch gap-0 flex-1 min-h-[560px] relative ${
-                    isDraggingSplitter ? 'select-none cursor-col-resize' : ''
+                    isDraggingSplitter || isDraggingExplorerSplitter ? 'select-none cursor-col-resize' : ''
                 }`}
                 style={{
                     ['--left-pane-width' as any]: `${leftPanelWidth}%`,
                 }}
             >
-                {/* Left: Monaco Editor */}
+                {/* Left: Editor & File Explorer Sub-container */}
                 <div
-                    className="flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-950/90 shadow-2xl overflow-hidden min-h-[500px] w-full lg:w-[calc(var(--left-pane-width)-8px)]"
+                    ref={leftSubContainerRef}
+                    className="flex flex-col lg:flex-row items-stretch gap-1 min-h-[500px] w-full lg:w-[calc(var(--left-pane-width)-8px)]"
                     style={{
                         flexShrink: 0,
+                        ['--explorer-width' as any]: `${explorerWidth}px`,
                     }}
                 >
-                    {/* Editor Tab Header */}
-                    <div className="flex items-center justify-between border-b border-white/10 bg-midnight-900/80 px-4 py-2 text-xs">
-                        <div className="flex items-center space-x-2">
-                            <FileCode2 className="h-4 w-4 text-indigo-400" />
-                            <span className="font-mono text-slate-200 font-medium">{filename}</span>
-                            {isDirty ? (
-                                <span className="text-[10px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 flex items-center gap-1">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                                    <span>Unsaved (Ctrl+S)</span>
-                                </span>
-                            ) : (
-                                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                                    Saved
-                                </span>
-                            )}
-                            <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20">
-                                Compact
-                            </span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            {/* Editor Tab Quick Undo / Redo */}
-                            <div className="flex items-center space-x-0.5 bg-midnight-950/80 rounded-lg p-0.5 border border-white/10 mr-1">
-                                <button
-                                    onClick={handleUndo}
-                                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-                                    title="Undo (Ctrl+Z / ⌘Z)"
-                                >
-                                    <Undo2 className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                    onClick={handleRedo}
-                                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-                                    title="Redo (Ctrl+Y / ⌘⇧Z)"
-                                >
-                                    <Redo2 className="h-3.5 w-3.5" />
-                                </button>
+                    {/* Collapsible & Resizable File Explorer Sidebar */}
+                    {isExplorerOpen && (
+                        <>
+                            <div className="w-full lg:w-[var(--explorer-width)] flex-shrink-0 rounded-2xl border border-indigo-500/20 bg-midnight-950/90 shadow-2xl overflow-hidden min-h-[350px] lg:min-h-full flex flex-col">
+                                <FileExplorer
+                                    activeFilePath={activeFilePath || (filename ? `contracts/${filename}` : undefined)}
+                                    onSelectFile={handleSelectWorkspaceFile}
+                                    onFileCreated={(newNode) => {
+                                        toast.success('File Created', newNode.path);
+                                    }}
+                                    onFileDeleted={(deletedPath) => {
+                                        if (activeFilePath === deletedPath) {
+                                            setActiveFilePath('');
+                                        }
+                                        toast.info('File Deleted', deletedPath);
+                                    }}
+                                />
                             </div>
-                            <button
-                                onClick={() => setActiveTab('ai')}
-                                className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-lg bg-gradient-to-r from-purple-600/30 to-indigo-600/30 text-indigo-200 hover:from-purple-600 hover:to-indigo-600 hover:text-white border border-indigo-500/40 text-[11px] font-semibold transition-all shadow-sm"
-                                title="Open Gemini AI Copilot for this code"
-                            >
-                                <Sparkles className="h-3 w-3 text-cyan-300" />
-                                <span>Ask Copilot</span>
-                            </button>
-                            <span className="text-[11px] text-slate-500 font-mono">
-                                {sourceCode.split('\n').length} lines
-                            </span>
-                        </div>
-                    </div>
 
-                    {/* Monaco Editor Container */}
-                    <div className="flex-1 w-full min-h-[480px] relative">
-                        <Editor
-                            height="100%"
-                            language={COMPACT_LANGUAGE_ID}
-                            value={sourceCode}
-                            onChange={(value) => {
-                                setSourceCode(value || '');
-                                setIsDirty(true);
-                            }}
-                            onMount={handleEditorDidMount}
-                            options={{
-                                fontSize: 13,
-                                fontFamily: "'JetBrains Mono', 'Fira Code', 'Menlo', monospace",
-                                minimap: { enabled: false },
-                                tabSize: 2,
-                                wordWrap: 'on',
-                                automaticLayout: true,
-                                scrollBeyondLastLine: false,
-                                lineNumbers: 'on',
-                                renderLineHighlight: 'all',
-                                padding: { top: 12, bottom: 12 },
-                            }}
-                            theme="compact-midnight-dark"
-                        />
+                            {/* Vertical Resizer Gutter between Explorer and Editor (Desktop lg+) */}
+                            <div
+                                onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    setIsDraggingExplorerSplitter(true);
+                                }}
+                                onDoubleClick={() => {
+                                    setExplorerWidth(260);
+                                    try {
+                                        localStorage.setItem('midnight_ide_explorer_width', '260');
+                                    } catch {}
+                                    toast.info('Explorer Reset', 'Reset explorer width to 260px');
+                                }}
+                                className="hidden lg:flex items-center justify-center w-3 mx-0.5 group cursor-col-resize z-20 select-none flex-shrink-0"
+                                title="Drag horizontally to resize File Explorer (Double-click to reset)"
+                            >
+                                <div
+                                    className={`w-1 h-14 rounded-full transition-all duration-150 ${
+                                        isDraggingExplorerSplitter
+                                            ? 'bg-gradient-to-b from-indigo-400 via-cyan-400 to-purple-500 w-1.5 shadow-lg shadow-indigo-500/50 scale-y-110'
+                                            : 'bg-white/10 group-hover:bg-indigo-400/80 group-hover:w-1.5 group-hover:shadow-md group-hover:shadow-indigo-400/30'
+                                    }`}
+                                />
+                            </div>
+                        </>
+                    )}
+
+                    {/* Monaco Editor Card */}
+                    <div className={`flex-1 flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-950/90 shadow-2xl overflow-hidden min-h-[500px] min-w-0 ${
+                        isDraggingSplitter || isDraggingExplorerSplitter ? 'pointer-events-none select-none' : ''
+                    }`}>
+                        {/* Editor Tab Header */}
+                        <div className="flex items-center justify-between border-b border-white/10 bg-midnight-900/80 px-4 py-2 text-xs">
+                            <div className="flex items-center space-x-2 truncate min-w-0">
+                                <FileCode2 className="h-4 w-4 text-indigo-400 flex-shrink-0" />
+                                <span className="font-mono text-slate-200 font-medium truncate" title={activeFilePath || filename}>
+                                    {activeFilePath || filename}
+                                </span>
+                                {isDirty ? (
+                                    <span className="text-[10px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 flex items-center gap-1 flex-shrink-0">
+                                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                        <span>Unsaved (Ctrl+S)</span>
+                                    </span>
+                                ) : (
+                                    <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 flex-shrink-0">
+                                        Saved
+                                    </span>
+                                )}
+                                <span className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20 capitalize flex-shrink-0">
+                                    {activeLanguage}
+                                </span>
+                            </div>
+                            <div className="flex items-center space-x-2 flex-shrink-0">
+                                {/* Editor Tab Quick Undo / Redo */}
+                                <div className="flex items-center space-x-0.5 bg-midnight-950/80 rounded-lg p-0.5 border border-white/10 mr-1">
+                                    <button
+                                        onClick={handleUndo}
+                                        className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                                        title="Undo (Ctrl+Z / ⌘Z)"
+                                    >
+                                        <Undo2 className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                        onClick={handleRedo}
+                                        className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+                                        title="Redo (Ctrl+Y / ⌘⇧Z)"
+                                    >
+                                        <Redo2 className="h-3.5 w-3.5" />
+                                    </button>
+                                </div>
+                                <button
+                                    onClick={() => setActiveTab('ai')}
+                                    className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-lg bg-gradient-to-r from-purple-600/30 to-indigo-600/30 text-indigo-200 hover:from-purple-600 hover:to-indigo-600 hover:text-white border border-indigo-500/40 text-[11px] font-semibold transition-all shadow-sm"
+                                    title="Open Gemini AI Copilot for this code"
+                                >
+                                    <Sparkles className="h-3 w-3 text-cyan-300" />
+                                    <span>Ask Copilot</span>
+                                </button>
+                                <span className="text-[11px] text-slate-500 font-mono">
+                                    {sourceCode.split('\n').length} lines
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Monaco Editor Container */}
+                        <div className="flex-1 w-full min-h-[480px] relative">
+                            <Editor
+                                height="100%"
+                                language={activeLanguage === 'compact' ? COMPACT_LANGUAGE_ID : activeLanguage}
+                                value={sourceCode}
+                                onChange={(value) => {
+                                    const val = value || '';
+                                    setSourceCode(val);
+                                    const hasChanged = val !== lastSavedContentRef.current;
+                                    setIsDirty(hasChanged);
+                                    try {
+                                        localStorage.setItem('midnight_ide_is_dirty', String(hasChanged));
+                                    } catch {}
+                                }}
+                                onMount={handleEditorDidMount}
+                                options={{
+                                    fontSize: 13,
+                                    fontFamily: "'JetBrains Mono', 'Fira Code', 'Menlo', monospace",
+                                    minimap: { enabled: false },
+                                    tabSize: 2,
+                                    wordWrap: 'on',
+                                    automaticLayout: true,
+                                    scrollBeyondLastLine: false,
+                                    lineNumbers: 'on',
+                                    renderLineHighlight: 'all',
+                                    padding: { top: 12, bottom: 12 },
+                                }}
+                                theme="compact-midnight-dark"
+                            />
+                        </div>
                     </div>
                 </div>
 
@@ -1207,7 +1635,9 @@ import CompactStandardLibrary;
                 </div>
 
                 {/* Right: Compiler Output & Artifact Studio */}
-                <div className="flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-900/70 backdrop-blur-xl shadow-2xl overflow-hidden min-h-[500px] w-full mt-6 lg:mt-0 lg:w-[calc(100%-var(--left-pane-width)-8px)] lg:flex-1">
+                <div className={`flex flex-col rounded-2xl border border-indigo-500/20 bg-midnight-900/70 backdrop-blur-xl shadow-2xl overflow-hidden min-h-[500px] w-full mt-6 lg:mt-0 lg:w-[calc(100%-var(--left-pane-width)-8px)] lg:flex-1 ${
+                    isDraggingSplitter || isDraggingExplorerSplitter ? 'pointer-events-none select-none' : ''
+                }`}>
                     {/* Studio Tabs Header */}
                     <div className="flex items-center justify-between border-b border-white/10 bg-midnight-950/80 px-3 py-2 overflow-x-auto">
                         <div className="flex space-x-1 min-w-max">
@@ -1743,6 +2173,8 @@ import CompactStandardLibrary;
                                 <AiCopilotPanel
                                     filename={filename}
                                     sourceCode={sourceCode}
+                                    contractFilename={lastCompactContractRef.current.filename}
+                                    contractCode={lastCompactContractRef.current.code}
                                     compilerResult={compilationResult}
                                     testResult={testResult}
                                     onApplyCodeToEditor={handleApplyAiCode}
@@ -1976,6 +2408,93 @@ import CompactStandardLibrary;
                     </div>
                 </div>
             )}
+
+            {/* Unsaved Changes Confirmation Modal */}
+            {isUnsavedModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+                    <div className="w-full max-w-md rounded-2xl bg-midnight-900 border border-amber-500/40 p-6 shadow-2xl shadow-amber-500/10 space-y-5">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                            <div className="flex items-center space-x-2.5">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                                    <AlertTriangle className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-bold text-white">Unsaved Changes</h3>
+                                    <p className="text-[11px] text-slate-400">Review unsaved work before proceeding</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleCancelUnsavedModal}
+                                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                                title="Cancel"
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+
+                        <div className="space-y-3 text-xs text-slate-300">
+                            <p>
+                                You have unsaved changes in{' '}
+                                <span className="font-mono text-amber-300 font-semibold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                                    {activeFilePath || filename}
+                                </span>
+                                .
+                            </p>
+                            <p className="text-slate-400 leading-relaxed">
+                                Loading{' '}
+                                <span className="font-mono text-cyan-300 font-medium">
+                                    {pendingTargetName || 'another file'}
+                                </span>{' '}
+                                will replace your current editor content. Do you want to save your changes first or cancel?
+                            </p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-3 border-t border-white/5">
+                            <button
+                                type="button"
+                                onClick={handleCancelUnsavedModal}
+                                disabled={isSavingBeforeLoad}
+                                className="w-full sm:w-auto px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/5 border border-white/10 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleConfirmDiscardAndLoad}
+                                disabled={isSavingBeforeLoad}
+                                className="w-full sm:w-auto px-3.5 py-2 rounded-xl text-xs font-semibold text-rose-300 hover:text-white hover:bg-rose-600/30 border border-rose-500/30 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center space-x-1.5"
+                            >
+                                <span>Discard Changes</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleConfirmSaveAndLoad}
+                                disabled={isSavingBeforeLoad}
+                                className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-semibold text-white bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 shadow-lg shadow-indigo-500/25 transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center space-x-1.5"
+                            >
+                                {isSavingBeforeLoad ? (
+                                    <>
+                                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                        <span>Saving...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Save className="h-3.5 w-3.5" />
+                                        <span>Save & Load</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Export DApp Bundle Modal */}
+            <ExportDappModal
+                isOpen={isExportDappModalOpen}
+                onClose={() => setIsExportDappModalOpen(false)}
+                contractFilename={lastCompactContractRef.current.filename || filename}
+            />
         </div>
     );
 }

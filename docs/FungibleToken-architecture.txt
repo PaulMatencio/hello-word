@@ -1,0 +1,33 @@
++-----------------------------------------------------------------------------+
+|                          FungibleToken Architecture                         |
+|                                                                             |
+|  +-----------------------------------------------------------------------+  |
+|  |                         Public Ledger State                           |  |
+|  |  • _isInitialized: Boolean                                            |  |
+|  |  • _name: Opaque<"string">                                            |  |
+|  |  • _symbol: Opaque<"string">                                          |  |
+|  |  • _decimals: Uint<8>                                                 |  |
+|  |  • _totalSupply: Uint<128>                                            |  |
+|  |  • _balances: Map<Bytes<32>, Uint<128>>                               |  |
+|  |  • _allowances: Map<Bytes<32>, Map<Bytes<32>, Uint<128>>>             |  |
+|  +-----------------------------------------------------------------------+  |
+|                                     ^                                       |
+|                                     | (disclose)                            |
+|  +-----------------------------------------------------------------------+  |
+|  |                        Zero-Knowledge Circuits                        |  |
+|  |  • initialize(name, symbol, decimals)                                 |  |
+|  |  • transfer(caller, to, value) -> Boolean                             |  |
+|  |  • approve(caller, spender, value) -> Boolean                         |  |
+|  |  • transferFrom(caller, fromAccount, to, value) -> Boolean            |  |
+|  |  • _mint(account, value) / _burn(account, value)                      |  |
+|  |  • name(), symbol(), decimals(), totalSupply()                        |  |
+|  |  • balanceOf(account), allowance(owner, spender)                     |  |
+|  +-----------------------------------------------------------------------+  |
+|                                     ^                                       |
+|                                     | (witness context / off-chain state)   |
+|  +-----------------------------------------------------------------------+  |
+|  |                        Client Private State                           |  |
+|  |  • Local caller identities (signing keys / public keys)               |  |
+|  |  • Cached token metadata & transaction records                        |  |
+|  +-----------------------------------------------------------------------+  |
++-----------------------------------------------------------------------------+

@@ -3,7 +3,6 @@ import * as CompactRuntime from '@midnight-ntwrk/compact-runtime';
 import {
   Contract,
   ledger,
-  State,
   type Witnesses,
 } from '../../contracts/managed/counter/contract/index.js';
 

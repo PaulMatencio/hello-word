@@ -83,7 +83,7 @@ export class CounterClient<PS = CounterPrivateState> {
         'Client-side validation error: Increment step must be greater than zero'
       );
     }
-    return this.contract.circuits.increment(context, by);
+    return this.contract.circuits.increment(context, BigInt(by));
   }
 
   /**

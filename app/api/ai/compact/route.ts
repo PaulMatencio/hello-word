@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
+import { getSkillsForAction } from '@/src/infrastructure/skills/skill-loader';
+import { getCleanContractBaseName } from '@/src/lib/contract-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -140,7 +142,7 @@ Please:
 3. Highlight what changed and why.
 `;
         } else if (action === 'generate_client') {
-            const baseContractName = (filename || 'contract').replace(/\.compact$/, '');
+            const baseContractName = getCleanContractBaseName(filename);
             const pascalName = baseContractName
                 .split('-')
                 .map((s: string) => s.charAt(0).toUpperCase() + s.slice(1))
@@ -148,7 +150,8 @@ Please:
 
             contextualPrompt = `
 Task: Generate a production-grade TypeScript client SDK AND comprehensive technical documentation for this Midnight Compact smart contract.
-Contract Filename: ${filename}
+Contract Name: ${baseContractName}
+Contract Filename: ${baseContractName}.compact
 
 Compact Contract Source Code:
 \`\`\`compact
@@ -170,6 +173,7 @@ Provide detailed, structured technical documentation covering:
    - Available Zero-Knowledge Circuits (\`export circuit ...\`) and their assertions/rules.
 2. **Prerequisites & Installation**:
    - Required packages (\`@midnight-ntwrk/compact-runtime\`, etc.).
+   - If providing terminal installation commands, specify that they are for \`scripts/${baseContractName}-install.sh\`.
 3. **API Reference**:
    - Method signatures, parameters, return types, and circuit error codes.
 4. **Step-by-Step Quickstart & Usage Walkthrough**:
@@ -203,10 +207,12 @@ Provide the complete, strongly-typed TypeScript SDK file (intended for \`src/cli
    - Comprehensive TSDoc inline comments.
 `;
         } else if (action === 'generate_tests') {
-            const cleanContractName = filename.replace(/\.compact$/, '');
+            const cleanContractName = getCleanContractBaseName(filename);
             contextualPrompt = `
-Task: Generate a comprehensive Vitest unit test suite for this Compact contract.
-Contract Filename: ${filename}
+Task: Generate a comprehensive Vitest unit test suite for this Compact contract strictly adhering to the Midnight-CQ Compact Contract Testing Standards.
+Contract Name: ${cleanContractName}
+Contract Filename: ${cleanContractName}.compact
+Expected Test File: tests/contracts/${cleanContractName}.test.ts
 
 Compact Contract Code:
 \`\`\`compact
@@ -217,29 +223,50 @@ ${dtsContent ? `TypeScript Type Definitions (.d.ts):\n\`\`\`typescript\n${dtsCon
 
 ${prompt ? `Additional test cases requested: ${prompt}` : ''}
 
-Please generate a complete Vitest test file (\`tests/contracts/${cleanContractName}.test.ts\`) that:
-1. Imports Vitest: \`import { describe, it, expect, beforeEach } from 'vitest';\`
-2. Imports Compact Runtime: \`import * as CompactRuntime from '@midnight-ntwrk/compact-runtime';\`
-3. STRICTLY imports the compiled contract artifacts from the managed directory:
-   \`import { Contract, ledger, State, type Witnesses } from '../../contracts/managed/${cleanContractName}/contract/index.js';\` (NEVER use \`./contract/index.js\`).
-4. Creates deterministic mock keys and properly typed mock witnesses:
+MANDATORY MIDNIGHT-CQ TEST GENERATION RULES (CRITICAL - DO NOT VIOLATE):
+1. **EXACT IMPORTS (NEVER DEVIATE)**:
    \`\`\`typescript
-   const aliceSecretKey = new Uint8Array(32).fill(0xaa);
-   const mockCoinPublicKey = '01'.repeat(32);
-   const mockContractAddress = '00'.repeat(32);
-   const createMockWitnesses = (secretKey: Uint8Array): Witnesses<MyPrivateState> => ({
-     localSecretKey: (context) => {
-       const currentPs = context?.privateState ?? { secretKey };
-       return [currentPs, currentPs.secretKey ?? secretKey];
-     },
-   });
+   import { describe, it, expect, beforeEach } from 'vitest';
+   import * as CompactRuntime from '@midnight-ntwrk/compact-runtime';
+   import { Contract, ledger, type Witnesses } from '../../contracts/managed/${cleanContractName}/contract/index.js';
    \`\`\`
-5. Uses \`CompactRuntime.createConstructorContext\` and \`CompactRuntime.createCircuitContext\` to simulate local circuit execution:
-   - Initial circuit call uses \`currentContractState.data\` (from \`initialState\`).
-   - Circuit chaining passes \`result.context.currentQueryContext.state\` directly as \`contractState\` (DO NOT use \`.data\`, as \`currentQueryContext.state\` is already a ChargedState).
-   - When chaining circuits, pass \`result.context.currentPrivateState ?? initialPrivateState\` as the private state.
-   - Query ledger state using \`const ledgerState = ledger(result.context.currentQueryContext.state);\` (or \`ledger(currentContractState.data)\` for constructor state).
-6. Tests contract initialization, positive state transitions for all circuits, and negative assertion failure cases (\`expect(() => contract.circuits.xyz(ctx, ...)).toThrow(...)\`).
+   - WARNING: NEVER use \`import { CompactRuntime }\`! \`CompactRuntime\` is NOT a named export; you MUST use \`import * as CompactRuntime\`.
+   - WARNING: NEVER import from \`./contract/index.js\`! The test file is in \`tests/contracts/\`, so the path to the managed contract MUST be \`../../contracts/managed/${cleanContractName}/contract/index.js\`.
+
+2. **ALL COMPACT UINT VALUES MUST BE BIGINT**:
+   - All Compact \`Uint<N>\` types (\`Uint<8>\`, \`Uint<16>\`, \`Uint<32>\`, \`Uint<64>\`, \`Uint<128>\`, \`Uint<256>\`) in TypeScript runtime require \`bigint\` literals (e.g. \`8n\`, \`18n\`, \`1_000n\`). Passing numbers causes runtime type errors.
+   - Always implement an auto-normalizing runner in the test file:
+     \`\`\`typescript
+     const runCircuit = (circuitFn: (...args: any[]) => any, ...args: any[]) => {
+       const normalizedArgs = args.map((arg) => (typeof arg === 'number' ? BigInt(arg) : arg));
+       const result = circuitFn(circuitContext, ...normalizedArgs);
+       circuitContext = CompactRuntime.createCircuitContext(
+         dummyContractAddress,
+         dummyCoinPublicKey,
+         result.context.currentQueryContext.state,
+         privateState
+       );
+       return result.result;
+     };
+     \`\`\`
+
+3. **BIGINT RETURN ASSERTIONS**:
+   - When asserting \`Uint<N>\` returns (such as \`decimals()\` or \`totalSupply()\`), expect \`bigint\` or convert with \`Number(...)\`:
+     \`expect(Number(decimals)).toBe(8);\` (or \`expect(decimals).toBe(8n);\`)
+     \`expect(totalSupply).toBe(0n);\`
+
+4. **MODULE vs CONTRACT AWARENESS**:
+   - If the Compact contract is defined inside \`module <Name> { ... }\`, internal module circuits are NOT visible on \`Contract.circuits\`. Tests must ONLY invoke circuits that are declared top-level on \`Circuits<PS>\` in the generated \`.d.ts\`.
+
+5. **EXACT ERROR STRING ASSERTIONS**:
+   - Negative tests MUST assert the exact string from \`assert(condition, "error message")\`:
+     \`expect(() => runCircuit(contract.circuits.xyz, ...)).toThrow('Exact error message');\`
+
+6. **DETERMINISTIC MOCK DATA**:
+   - Create 32-byte key arrays: \`const createKey = (b: number): Uint8Array => new Uint8Array(32).fill(b);\`
+   - Context addresses: \`const dummyContractAddress = '00'.repeat(32); const dummyCoinPublicKey = '01'.repeat(32);\`
+
+Please generate the complete, runnable Vitest test file (\`tests/contracts/${cleanContractName}.test.ts\`) inside a \`\`\`typescript ... \`\`\` code block.
 `;
         } else if (action === 'audit_zk') {
             contextualPrompt = `
@@ -291,6 +318,12 @@ ${prompt}
 `;
         }
 
+        // Dynamically inject relevant Midnight Expert Skills from .agents/plugins/
+        const injectedSkills = getSkillsForAction(action, prompt);
+        const effectiveSystemPrompt = injectedSkills
+            ? `${COMPACT_SYSTEM_PROMPT}\n\n${injectedSkills}`
+            : COMPACT_SYSTEM_PROMPT;
+
         // Use selected model, default to gemini-3.7-flash
         const selectedModel = model || 'gemini-3.7-flash';
 
@@ -298,7 +331,7 @@ ${prompt}
             model: selectedModel,
             contents: contextualPrompt,
             config: {
-                systemInstruction: COMPACT_SYSTEM_PROMPT,
+                systemInstruction: effectiveSystemPrompt,
                 temperature: action === 'chat' ? 0.4 : 0.2,
             },
         });
