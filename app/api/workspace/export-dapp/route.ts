@@ -3,28 +3,15 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import JSZip from 'jszip';
 import { getCleanContractBaseName } from '@/src/lib/contract-utils';
+import {
+    MIDNIGHT_CONFIG,
+    generateDeploymentConfig,
+    type DeploymentConfig,
+    DEFAULT_DEPLOYMENT_CONFIG,
+} from '@/src/infrastructure/config/midnight.config';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-
-export interface DeploymentConfig {
-    contractName?: string;
-    contractAddress?: string;
-    networkId?: string;
-    indexerUrl?: string;
-    indexerWsUrl?: string;
-    nodeUrl?: string;
-    proofServerUrl?: string;
-}
-
-const DEFAULT_DEPLOYMENT_CONFIG: DeploymentConfig = {
-    contractAddress: '0000000000000000000000000000000000000000000000000000000000000000',
-    networkId: 'devnet',
-    indexerUrl: 'http://127.0.0.1:8088/api/v4/graphql',
-    indexerWsUrl: 'ws://127.0.0.1:8088/api/v4/graphql/ws',
-    nodeUrl: 'http://127.0.0.1:9944',
-    proofServerUrl: 'http://127.0.0.1:6300',
-};
 
 /**
  * Generate a comprehensive, self-contained master prompt for Gemini or Claude
@@ -76,14 +63,16 @@ Scaffold and implement a complete, production-grade **React 19 / Next.js (App Ro
 ---
 
 ### 2. Network & Deployment Configuration
-Use the configuration specified in \`deployment.config.json\`:
+Use the configuration specified in \`deployment.config.json\` (configured via \`infrastructure/config/midnight-config.ts\`):
 - **Contract Name**: \`${baseContractName}\`
 - **Contract Address**: \`${config.contractAddress || DEFAULT_DEPLOYMENT_CONFIG.contractAddress}\`
-- **Network ID**: \`${config.networkId || 'devnet'}\`
-- **Indexer GraphQL Endpoint**: \`${config.indexerUrl || 'http://127.0.0.1:8088/api/v4/graphql'}\`
-- **Indexer WebSocket Endpoint**: \`${config.indexerWsUrl || 'ws://127.0.0.1:8088/api/v4/graphql/ws'}\`
-- **Node RPC Endpoint**: \`${config.nodeUrl || 'http://127.0.0.1:9944'}\`
-- **Proof Server Endpoint**: \`${config.proofServerUrl || 'http://127.0.0.1:6300'}\`
+- **Network ID**: \`${config.networkId || DEFAULT_DEPLOYMENT_CONFIG.networkId}\`
+- **Indexer GraphQL Endpoint**: \`${config.indexerUrl || DEFAULT_DEPLOYMENT_CONFIG.indexerUrl}\`
+- **Indexer WebSocket Endpoint**: \`${config.indexerWsUrl || DEFAULT_DEPLOYMENT_CONFIG.indexerWsUrl}\`
+- **Node RPC Endpoint**: \`${config.nodeUrl || DEFAULT_DEPLOYMENT_CONFIG.nodeUrl}\`
+- **Proof Server Endpoint**: \`${config.proofServerUrl || DEFAULT_DEPLOYMENT_CONFIG.proofServerUrl}\`
+- **Faucet Endpoint**: \`${config.faucetUrl || DEFAULT_DEPLOYMENT_CONFIG.faucetUrl}\`
+- **Block Explorer**: \`${config.explorerUrl || DEFAULT_DEPLOYMENT_CONFIG.explorerUrl}\`
 
 ---
 
@@ -253,15 +242,17 @@ export async function GET(req: NextRequest) {
         const baseContractName = getCleanContractBaseName(rawContract);
         const { artifacts, detectedFiles } = await collectContractArtifacts(baseContractName);
 
-        const config: DeploymentConfig = {
-            contractName: baseContractName,
-            contractAddress: searchParams.get('contractAddress') || DEFAULT_DEPLOYMENT_CONFIG.contractAddress,
-            networkId: searchParams.get('networkId') || DEFAULT_DEPLOYMENT_CONFIG.networkId,
-            indexerUrl: searchParams.get('indexerUrl') || DEFAULT_DEPLOYMENT_CONFIG.indexerUrl,
-            indexerWsUrl: searchParams.get('indexerWsUrl') || DEFAULT_DEPLOYMENT_CONFIG.indexerWsUrl,
-            nodeUrl: searchParams.get('nodeUrl') || DEFAULT_DEPLOYMENT_CONFIG.nodeUrl,
-            proofServerUrl: searchParams.get('proofServerUrl') || DEFAULT_DEPLOYMENT_CONFIG.proofServerUrl,
-        };
+        const queryOverride: Partial<DeploymentConfig> = {};
+        if (searchParams.get('contractAddress')) queryOverride.contractAddress = searchParams.get('contractAddress')!;
+        if (searchParams.get('networkId')) queryOverride.networkId = searchParams.get('networkId')!;
+        if (searchParams.get('indexerUrl')) queryOverride.indexerUrl = searchParams.get('indexerUrl')!;
+        if (searchParams.get('indexerWsUrl')) queryOverride.indexerWsUrl = searchParams.get('indexerWsUrl')!;
+        if (searchParams.get('nodeUrl')) queryOverride.nodeUrl = searchParams.get('nodeUrl')!;
+        if (searchParams.get('proofServerUrl')) queryOverride.proofServerUrl = searchParams.get('proofServerUrl')!;
+        if (searchParams.get('faucetUrl')) queryOverride.faucetUrl = searchParams.get('faucetUrl')!;
+        if (searchParams.get('explorerUrl')) queryOverride.explorerUrl = searchParams.get('explorerUrl')!;
+
+        const config = generateDeploymentConfig(baseContractName, queryOverride);
 
         const masterPrompt = generateGeminiDAppPrompt(baseContractName, config, detectedFiles);
 
@@ -301,7 +292,7 @@ This bundle contains all compiled smart contract artifacts, ZKIR circuit bytecod
 
 ## Contents:
 - \`GEMINI_DAPP_PROMPT.md\`: Master prompt for Gemini to scaffold your React 19 / Next.js frontend!
-- \`deployment.config.json\`: Midnight network and contract connection parameters.
+- \`deployment.config.json\`: Midnight network and contract connection parameters (generated from midnight-config.ts).
 - \`contract/\`: Compiled contract runtime (\`index.js\`, \`index.d.ts\`).
 - \`zkir/\`: Circuit Zero-Knowledge Intermediate Representation files.
 - \`sdk/\`: High-level TypeScript client adapter.
@@ -346,15 +337,7 @@ export async function POST(req: NextRequest) {
         const rawContract = body.contract || 'fungible-token';
         const baseContractName = getCleanContractBaseName(rawContract);
 
-        const config: DeploymentConfig = {
-            contractName: baseContractName,
-            contractAddress: body.deploymentConfig?.contractAddress || DEFAULT_DEPLOYMENT_CONFIG.contractAddress,
-            networkId: body.deploymentConfig?.networkId || DEFAULT_DEPLOYMENT_CONFIG.networkId,
-            indexerUrl: body.deploymentConfig?.indexerUrl || DEFAULT_DEPLOYMENT_CONFIG.indexerUrl,
-            indexerWsUrl: body.deploymentConfig?.indexerWsUrl || DEFAULT_DEPLOYMENT_CONFIG.indexerWsUrl,
-            nodeUrl: body.deploymentConfig?.nodeUrl || DEFAULT_DEPLOYMENT_CONFIG.nodeUrl,
-            proofServerUrl: body.deploymentConfig?.proofServerUrl || DEFAULT_DEPLOYMENT_CONFIG.proofServerUrl,
-        };
+        const config = generateDeploymentConfig(baseContractName, body.deploymentConfig);
 
         const { artifacts, detectedFiles } = await collectContractArtifacts(baseContractName);
         const masterPrompt = generateGeminiDAppPrompt(baseContractName, config, detectedFiles);
@@ -379,7 +362,7 @@ This bundle contains all compiled smart contract artifacts, ZKIR circuit bytecod
 
 ## Contents:
 - \`GEMINI_DAPP_PROMPT.md\`: Master prompt for Gemini to scaffold your React 19 / Next.js frontend!
-- \`deployment.config.json\`: Midnight network and contract connection parameters.
+- \`deployment.config.json\`: Midnight network and contract connection parameters (generated from midnight-config.ts).
 - \`contract/\`: Compiled contract runtime (\`index.js\`, \`index.d.ts\`).
 - \`zkir/\`: Circuit Zero-Knowledge Intermediate Representation files.
 - \`sdk/\`: High-level TypeScript client adapter.

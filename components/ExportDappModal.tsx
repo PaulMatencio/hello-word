@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/src/presentation/context/ToastContext';
 import { getCleanContractBaseName } from '@/src/lib/contract-utils';
+import { MIDNIGHT_CONFIG } from '@/src/infrastructure/config/midnight.config';
 
 interface ExportDappModalProps {
     isOpen: boolean;
@@ -42,14 +43,16 @@ export function ExportDappModal({
 
     const cleanContractName = getCleanContractBaseName(contractFilename);
 
-    // Deployment config state
+    // Deployment config state loaded from midnight.config.ts defaults
     const [contractAddress, setContractAddress] = useState<string>(
         '0000000000000000000000000000000000000000000000000000000000000000'
     );
-    const [networkId, setNetworkId] = useState<string>('devnet');
-    const [indexerUrl, setIndexerUrl] = useState<string>('http://127.0.0.1:8088/api/v4/graphql');
-    const [proofServerUrl, setProofServerUrl] = useState<string>('http://127.0.0.1:6300');
-    const [nodeUrl, setNodeUrl] = useState<string>('http://127.0.0.1:9944');
+    const [networkId, setNetworkId] = useState<string>(MIDNIGHT_CONFIG.networkId);
+    const [indexerUrl, setIndexerUrl] = useState<string>(MIDNIGHT_CONFIG.indexer);
+    const [proofServerUrl, setProofServerUrl] = useState<string>(MIDNIGHT_CONFIG.proofServer);
+    const [nodeUrl, setNodeUrl] = useState<string>(MIDNIGHT_CONFIG.nodeRpc);
+    const [faucetUrl, setFaucetUrl] = useState<string>(MIDNIGHT_CONFIG.faucet);
+    const [explorerUrl, setExplorerUrl] = useState<string>(MIDNIGHT_CONFIG.explorer);
 
     // Fetch bundle preview data
     const loadPreview = async () => {
@@ -60,7 +63,13 @@ export function ExportDappModal({
                     cleanContractName
                 )}&preview=true&contractAddress=${encodeURIComponent(
                     contractAddress
-                )}&networkId=${encodeURIComponent(networkId)}`
+                )}&networkId=${encodeURIComponent(networkId)}&indexerUrl=${encodeURIComponent(
+                    indexerUrl
+                )}&nodeUrl=${encodeURIComponent(nodeUrl)}&proofServerUrl=${encodeURIComponent(
+                    proofServerUrl
+                )}&faucetUrl=${encodeURIComponent(faucetUrl)}&explorerUrl=${encodeURIComponent(
+                    explorerUrl
+                )}`
             );
             const data = await res.json();
             if (data.success) {
@@ -74,6 +83,39 @@ export function ExportDappModal({
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleNetworkChange = (selectedNetwork: string) => {
+        setNetworkId(selectedNetwork);
+        if (selectedNetwork === 'preprod') {
+            setIndexerUrl(MIDNIGHT_CONFIG.indexer);
+            setNodeUrl(MIDNIGHT_CONFIG.nodeRpc);
+            setProofServerUrl(MIDNIGHT_CONFIG.proofServer);
+            setFaucetUrl(MIDNIGHT_CONFIG.faucet);
+            setExplorerUrl(MIDNIGHT_CONFIG.explorer);
+        } else if (selectedNetwork === 'devnet') {
+            setIndexerUrl('http://127.0.0.1:8088/api/v4/graphql');
+            setNodeUrl('http://127.0.0.1:9944');
+            setProofServerUrl('http://127.0.0.1:6300');
+            setFaucetUrl('http://127.0.0.1:8088');
+            setExplorerUrl('');
+        } else if (selectedNetwork === 'preview') {
+            setIndexerUrl('https://indexer.preview.midnight.network/api/v4/graphql');
+            setNodeUrl('https://rpc.preview.midnight.network');
+            setProofServerUrl('http://127.0.0.1:6300');
+            setFaucetUrl('https://faucet.preview.midnight.network');
+            setExplorerUrl('https://explorer.1am.xyz');
+        }
+    };
+
+    const handleResetToMidnightConfig = () => {
+        setNetworkId(MIDNIGHT_CONFIG.networkId);
+        setIndexerUrl(MIDNIGHT_CONFIG.indexer);
+        setNodeUrl(MIDNIGHT_CONFIG.nodeRpc);
+        setProofServerUrl(MIDNIGHT_CONFIG.proofServer);
+        setFaucetUrl(MIDNIGHT_CONFIG.faucet);
+        setExplorerUrl(MIDNIGHT_CONFIG.explorer);
+        toast.info('Config Reset', 'Reset to midnight.config.ts defaults.');
     };
 
     useEffect(() => {
@@ -100,9 +142,11 @@ export function ExportDappModal({
                         contractAddress,
                         networkId,
                         indexerUrl,
-                        indexerWsUrl: indexerUrl.replace(/^http/, 'ws') + '/ws',
+                        indexerWsUrl: indexerUrl.replace(/^http/, 'ws') + (indexerUrl.endsWith('/ws') ? '' : '/ws'),
                         nodeUrl,
                         proofServerUrl,
+                        faucetUrl,
+                        explorerUrl,
                     },
                 }),
             });
@@ -208,7 +252,7 @@ export function ExportDappModal({
         },
         {
             name: 'Gemini Master Prompt & Config',
-            desc: 'GEMINI_DAPP_PROMPT.md and deployment.config.json auto-generated for this export',
+            desc: 'GEMINI_DAPP_PROMPT.md and deployment.config.json generated from midnight-config.ts for this export',
             matches: ['GEMINI_DAPP_PROMPT.md', 'deployment.config.json', 'README.md'],
             expected: 'Included automatically in ZIP',
             critical: true,
@@ -387,8 +431,17 @@ export function ExportDappModal({
                         </div>
                     ) : (
                         <div className="space-y-4 max-w-xl">
-                            <div className="text-xs text-slate-300 leading-relaxed">
-                                Configure the network endpoints and deployed contract address written into <code className="text-cyan-300 font-mono">deployment.config.json</code> in the bundle:
+                            <div className="flex items-center justify-between">
+                                <div className="text-xs text-slate-300 leading-relaxed">
+                                    Configure parameters written into <code className="text-cyan-300 font-mono">deployment.config.json</code> (defaults from <code className="text-cyan-300 font-mono">midnight.config.ts</code>):
+                                </div>
+                                <button
+                                    onClick={handleResetToMidnightConfig}
+                                    className="text-[11px] text-indigo-400 hover:text-indigo-300 underline shrink-0 cursor-pointer ml-2"
+                                    title="Reset to infrastructure/config/midnight.config.ts"
+                                >
+                                    Reset to midnight-config
+                                </button>
                             </div>
 
                             <div className="space-y-3">
@@ -420,12 +473,13 @@ export function ExportDappModal({
                                         </label>
                                         <select
                                             value={networkId}
-                                            onChange={(e) => setNetworkId(e.target.value)}
+                                            onChange={(e) => handleNetworkChange(e.target.value)}
                                             className="w-full rounded-xl bg-midnight-900 border border-white/10 px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none cursor-pointer"
                                         >
-                                            <option value="devnet">Devnet (Local)</option>
+                                            <option value="preprod">Preprod (Public Testnet - Default)</option>
+                                            <option value="devnet">Devnet (Local Docker)</option>
+                                            <option value="preview">Preview (Testnet)</option>
                                             <option value="testnet-remote">Testnet (Remote)</option>
-                                            <option value="preview">Preview</option>
                                             <option value="undeployed">Undeployed</option>
                                         </select>
                                     </div>
@@ -465,6 +519,32 @@ export function ExportDappModal({
                                         onChange={(e) => setNodeUrl(e.target.value)}
                                         className="w-full rounded-xl bg-midnight-900 border border-white/10 px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
                                     />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-300 mb-1">
+                                            Faucet URL
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={faucetUrl}
+                                            onChange={(e) => setFaucetUrl(e.target.value)}
+                                            className="w-full rounded-xl bg-midnight-900 border border-white/10 px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-xs font-medium text-slate-300 mb-1">
+                                            Block Explorer URL
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={explorerUrl}
+                                            onChange={(e) => setExplorerUrl(e.target.value)}
+                                            className="w-full rounded-xl bg-midnight-900 border border-white/10 px-3 py-2 text-xs font-mono text-white focus:border-indigo-500 focus:outline-none"
+                                        />
+                                    </div>
                                 </div>
                             </div>
                         </div>
